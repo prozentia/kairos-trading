@@ -1,0 +1,186 @@
+# Kairos Trading - Docker Compose (Production)
+# VPS: 158.220.103.131 | Domain: kairos.prozentia.com
+# Path: /opt/kairos-trading
+# Usage: docker compose -f docker-compose.prod.yml up -d
+
+services:
+  # ─── PostgreSQL Database ───────────────────────────────────────────
+  db:
+    image: postgres:16-alpine
+    container_name: kairos-db
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-kairos}
+      POSTGRES_USER: ${POSTGRES_USER:-kairos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - kairos-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kairos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── Redis Cache & Message Broker ──────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: kairos-redis
+    restart: always
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    networks:
+      - kairos-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ─── FastAPI Backend ───────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kairos-api
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kairos}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - kairos_config:/app/config
+      - kairos_logs:/app/logs
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - kairos-net
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  # ─── Trading Engine ────────────────────────────────────────────────
+  engine:
+    build:
+      context: .
+      dockerfile: engine/Dockerfile
+    container_name: kairos-engine
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kairos}
+      REDIS_URL: redis://redis:6379/0
+      API_URL: http://api:8000
+    volumes:
+      - kairos_config:/app/config
+      - kairos_logs:/app/logs
+    depends_on:
+      api:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - kairos-net
+
+  # ─── React Frontend (nginx) ───────────────────────────────────────
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: kairos-frontend
+    restart: always
+    ports:
+      - "80:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - kairos-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.kairos.rule=Host(`kairos.prozentia.com`)"
+      - "traefik.http.routers.kairos.entrypoints=websecure"
+      - "traefik.http.routers.kairos.tls.certresolver=letsencrypt"
+      - "traefik.http.services.kairos.loadbalancer.server.port=80"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  # ─── AI Agent ──────────────────────────────────────────────────────
+  ai-agent:
+    build:
+      context: .
+      dockerfile: ai_agent/Dockerfile
+    container_name: kairos-ai-agent
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kairos}
+      REDIS_URL: redis://redis:6379/0
+      API_URL: http://api:8000
+    volumes:
+      - kairos_config:/app/config
+      - kairos_logs:/app/logs
+    depends_on:
+      api:
+        condition: service_healthy
+    networks:
+      - kairos-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # ─── Notification Service ──────────────────────────────────────────
+  notifier:
+    build:
+      context: .
+      dockerfile: notifier/Dockerfile
+    container_name: kairos-notifier
+    restart: always
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-kairos}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-kairos}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - kairos_config:/app/config
+      - kairos_logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    networks:
+      - kairos-net
+    healthcheck:
+      test: ["CMD", "python", "-c", "import sys; sys.exit(0)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+networks:
+  kairos-net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  kairos_config:
+  kairos_logs:
