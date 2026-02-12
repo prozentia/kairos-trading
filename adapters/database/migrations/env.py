@@ -16,7 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import os
+import sys
 from logging.config import fileConfig
+from pathlib import Path
+
+# Ensure project root is on sys.path (needed when running inside Docker)
+_project_root = str(Path(__file__).resolve().parents[3])
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
 
 from alembic import context
 from sqlalchemy import pool
