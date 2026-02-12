@@ -1,6 +1,8 @@
 """Authentication router - register, login, token refresh, profile."""
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.jwt import (
     create_access_token,
@@ -10,6 +12,7 @@ from api.auth.jwt import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
 )
 from api.auth.password import hash_password, verify_password
+from api.deps import get_db
 from api.schemas.auth import (
     ChangePasswordRequest,
     LoginRequest,
@@ -21,6 +24,7 @@ from api.schemas.auth import (
     UserResponse,
 )
 from api.schemas.common import SuccessResponse
+from adapters.database.models import User
 
 router = APIRouter()
 
@@ -34,15 +38,37 @@ router = APIRouter()
     response_model=UserResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def register(body: RegisterRequest):
+async def register(body: RegisterRequest, db: AsyncSession = Depends(get_db)):
     """Create a new user account."""
-    # TODO: check if email already exists in DB
-    # TODO: hash password and insert user into DB
-    hashed = hash_password(body.password)  # noqa: F841
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="User registration not yet wired to the database",
+    # Check if email already exists
+    result = await db.execute(select(User).where(User.email == body.email))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Email already registered",
+        )
+
+    # Check if username already exists
+    result = await db.execute(select(User).where(User.username == body.username))
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Username already taken",
+        )
+
+    # Create user
+    hashed = hash_password(body.password)
+    user = User(
+        email=body.email,
+        username=body.username,
+        hashed_password=hashed,
+        is_active=True,
     )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -50,14 +76,37 @@ async def register(body: RegisterRequest):
 # ---------------------------------------------------------------------------
 
 @router.post("/login", response_model=LoginResponse)
-async def login(body: LoginRequest):
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Authenticate a user and return JWT tokens."""
-    # TODO: look up user by email
-    # TODO: verify_password(body.password, user.hashed_password)
-    # TODO: return tokens + user
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Login not yet wired to the database",
+    # Look up user by email
+    result = await db.execute(select(User).where(User.email == body.email))
+    user = result.scalar_one_or_none()
+
+    if not user or not verify_password(body.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if not user.is_active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Account is disabled",
+        )
+
+    # Generate tokens
+    token_data = {"sub": user.id, "email": user.email, "username": user.username}
+    access = create_access_token(token_data)
+    refresh = create_refresh_token(token_data)
+
+    return LoginResponse(
+        tokens=TokenPair(
+            access_token=access,
+            refresh_token=refresh,
+            expires_in=ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+        ),
+        user=UserResponse.model_validate(user),
     )
 
 
@@ -75,8 +124,11 @@ async def refresh(body: RefreshRequest):
             detail="Token is not a refresh token",
         )
     sub = payload["sub"]
-    access = create_access_token({"sub": sub})
-    refresh_tok = create_refresh_token({"sub": sub})
+    email = payload.get("email", "")
+    username = payload.get("username", "")
+    token_data = {"sub": sub, "email": email, "username": username}
+    access = create_access_token(token_data)
+    refresh_tok = create_refresh_token(token_data)
     return TokenPair(
         access_token=access,
         refresh_token=refresh_tok,
@@ -89,26 +141,67 @@ async def refresh(body: RefreshRequest):
 # ---------------------------------------------------------------------------
 
 @router.get("/me", response_model=UserResponse)
-async def get_me(current_user: dict = Depends(get_current_active_user)):
+async def get_me(
+    current_user: dict = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
     """Return the authenticated user's profile."""
-    # TODO: query full user from DB by current_user["sub"]
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Profile retrieval not yet wired to the database",
-    )
+    user_id = current_user.get("sub")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+    return user
 
 
 @router.put("/me", response_model=UserResponse)
 async def update_me(
     body: UpdateProfileRequest,
     current_user: dict = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Update the authenticated user's profile."""
-    # TODO: update user fields in DB
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Profile update not yet wired to the database",
-    )
+    user_id = current_user.get("sub")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    if body.username is not None:
+        # Check uniqueness
+        existing = await db.execute(
+            select(User).where(User.username == body.username, User.id != user_id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Username already taken",
+            )
+        user.username = body.username
+
+    if body.email is not None:
+        # Check uniqueness
+        existing = await db.execute(
+            select(User).where(User.email == body.email, User.id != user_id)
+        )
+        if existing.scalar_one_or_none():
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already registered",
+            )
+        user.email = body.email
+
+    await db.commit()
+    await db.refresh(user)
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -119,10 +212,28 @@ async def update_me(
 async def change_password(
     body: ChangePasswordRequest,
     current_user: dict = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
 ):
     """Change the authenticated user's password."""
-    # TODO: verify current password, hash new password, update DB
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Password change not yet wired to the database",
-    )
+    user_id = current_user.get("sub")
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found",
+        )
+
+    # Verify current password
+    if not verify_password(body.current_password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Current password is incorrect",
+        )
+
+    # Hash and set new password
+    user.hashed_password = hash_password(body.new_password)
+    await db.commit()
+
+    return SuccessResponse(message="Password changed successfully")

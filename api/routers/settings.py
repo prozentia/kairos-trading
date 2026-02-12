@@ -1,12 +1,20 @@
 """Settings router - global platform settings, API key testing, backup/restore."""
 
+import json
+import os
+
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
 from pydantic import BaseModel, Field
 
 from api.auth.jwt import get_current_active_user
 from api.schemas.common import SuccessResponse
 
+import httpx
+
 router = APIRouter()
+
+# In-memory settings store (can be upgraded to DB / encrypted vault)
+_settings_store: dict = {}
 
 
 # ---------------------------------------------------------------------------
@@ -79,6 +87,29 @@ class TestTelegramRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _build_response() -> SettingsResponse:
+    """Build settings response from the in-memory store."""
+    return SettingsResponse(
+        exchange=_settings_store.get("exchange", "binance"),
+        exchange_api_key_set=bool(_settings_store.get("exchange_api_key")),
+        exchange_api_secret_set=bool(_settings_store.get("exchange_api_secret")),
+        telegram_enabled=_settings_store.get("telegram_enabled", False),
+        telegram_bot_token_set=bool(_settings_store.get("telegram_bot_token")),
+        telegram_chat_id=_settings_store.get("telegram_chat_id", ""),
+        openrouter_api_key_set=bool(
+            _settings_store.get("openrouter_api_key") or os.getenv("OPENROUTER_API_KEY")
+        ),
+        openrouter_model=_settings_store.get("openrouter_model", "anthropic/claude-sonnet-4"),
+        timezone=_settings_store.get("timezone", "UTC"),
+        language=_settings_store.get("language", "fr"),
+        theme=_settings_store.get("theme", "dark"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Read / Update
 # ---------------------------------------------------------------------------
 
@@ -87,8 +118,7 @@ async def get_settings(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Get all platform settings (sensitive fields masked)."""
-    # TODO: read from config / DB
-    return SettingsResponse()
+    return _build_response()
 
 
 @router.put("/", response_model=SettingsResponse)
@@ -97,11 +127,12 @@ async def update_settings(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Update platform settings."""
-    # TODO: validate, encrypt secrets, write to config / DB
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Settings update not yet wired",
-    )
+    updates = body.model_dump(exclude_unset=True)
+    for key, value in updates.items():
+        if value is not None:
+            _settings_store[key] = value
+
+    return _build_response()
 
 
 # ---------------------------------------------------------------------------
@@ -114,8 +145,41 @@ async def test_exchange(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Test exchange API connectivity with provided credentials."""
-    # TODO: attempt a read-only API call (e.g. get account info)
-    return SuccessResponse(message="Exchange connection test not yet implemented")
+    if body.exchange == "binance":
+        try:
+            import hashlib
+            import hmac
+            import time
+            import urllib.parse
+
+            timestamp = int(time.time() * 1000)
+            query = f"timestamp={timestamp}"
+            signature = hmac.new(
+                body.api_secret.encode(),
+                query.encode(),
+                hashlib.sha256,
+            ).hexdigest()
+
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"https://api.binance.com/api/v3/account?{query}&signature={signature}",
+                    headers={"X-MBX-APIKEY": body.api_key},
+                )
+                if resp.status_code == 200:
+                    return SuccessResponse(message="Exchange connection successful")
+                else:
+                    error = resp.json().get("msg", "Unknown error")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Exchange API error: {error}",
+                    )
+        except httpx.HTTPError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Cannot reach exchange: {exc}",
+            )
+
+    return SuccessResponse(message=f"Exchange {body.exchange} test not yet supported")
 
 
 @router.post("/test-telegram", response_model=SuccessResponse)
@@ -124,8 +188,28 @@ async def test_telegram(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Send a test message to Telegram to verify bot token and chat ID."""
-    # TODO: send "Test OK" message via Telegram API
-    return SuccessResponse(message="Telegram test not yet implemented")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{body.bot_token}/sendMessage",
+                json={
+                    "chat_id": body.chat_id,
+                    "text": "Kairos Trading - Test message OK",
+                },
+            )
+            if resp.status_code == 200:
+                return SuccessResponse(message="Telegram test message sent successfully")
+            else:
+                error = resp.json().get("description", "Unknown error")
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Telegram API error: {error}",
+                )
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Cannot reach Telegram: {exc}",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -140,8 +224,17 @@ async def backup_config(
 
     Sensitive fields (API keys) are excluded.
     """
-    # TODO: build config export
-    return {"config": {}, "exported_at": ""}
+    from datetime import datetime, timezone
+
+    safe_config = {
+        k: v for k, v in _settings_store.items()
+        if "key" not in k.lower() and "secret" not in k.lower() and "token" not in k.lower()
+    }
+
+    return {
+        "config": safe_config,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+    }
 
 
 @router.post("/restore", response_model=SuccessResponse)
@@ -150,8 +243,19 @@ async def restore_config(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Import configuration from a previously exported JSON file."""
-    # TODO: validate and apply config
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Config restore not yet implemented",
-    )
+    try:
+        content = await file.read()
+        data = json.loads(content)
+        config = data.get("config", {})
+
+        # Merge into settings store (skip sensitive fields)
+        for key, value in config.items():
+            if "key" not in key.lower() and "secret" not in key.lower() and "token" not in key.lower():
+                _settings_store[key] = value
+
+        return SuccessResponse(message=f"Configuration restored ({len(config)} keys)")
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Invalid configuration file: {exc}",
+        )

@@ -80,19 +80,17 @@ class StrategyResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     name: str
-    description: str
+    description: str = ""
     version: str = "1.0"
-    pairs: list[str]
-    timeframe: str
-    entry_conditions: list[dict[str, Any]]
-    exit_conditions: list[dict[str, Any]]
-    filters: list[dict[str, Any]]
-    risk: dict[str, Any]
-    indicators_needed: list[str]
-    is_active: bool
-    metadata: dict[str, Any]
+    json_definition: str = "{}"
+    is_active: bool = False
+    is_validated: bool = False
+    total_trades: int = 0
+    winning_trades: int = 0
+    total_pnl: float = 0.0
+    created_by: str | None = None
     created_at: datetime
     updated_at: datetime | None = None
 

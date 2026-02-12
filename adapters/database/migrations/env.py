@@ -4,6 +4,9 @@ This module is called by Alembic when running migrations.
 It configures the SQLAlchemy engine and metadata target
 for both 'offline' (SQL script) and 'online' (live DB) modes.
 
+The DATABASE_URL environment variable takes precedence over
+the URL in alembic.ini.
+
 Usage:
     alembic upgrade head
     alembic revision --autogenerate -m "description"
@@ -12,6 +15,7 @@ Usage:
 from __future__ import annotations
 
 import asyncio
+import os
 from logging.config import fileConfig
 
 from alembic import context
@@ -19,11 +23,21 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Import all models so Alembic can detect them
-from adapters.database.models import Base
+# Import all models so Alembic can detect them for autogenerate
+from adapters.database.models import Base  # noqa: F401
 
 # Alembic Config object (provides access to alembic.ini values)
 config = context.config
+
+# Override sqlalchemy.url with DATABASE_URL env var if present
+database_url = os.getenv("DATABASE_URL")
+if database_url:
+    # Ensure the URL uses the asyncpg driver
+    if database_url.startswith("postgresql://"):
+        database_url = database_url.replace(
+            "postgresql://", "postgresql+asyncpg://", 1
+        )
+    config.set_main_option("sqlalchemy.url", database_url)
 
 # Set up Python logging from the Alembic config file
 if config.config_file_name is not None:

@@ -45,22 +45,22 @@ class TradeResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     pair: str
     side: str
     entry_price: float
-    exit_price: float
+    exit_price: float | None = None
     quantity: float
     entry_time: datetime
-    exit_time: datetime
-    pnl_usdt: float
-    pnl_pct: float
-    fees: float
-    strategy_name: str
-    entry_reason: str
-    exit_reason: str
-    metadata: dict | None = None
-    created_at: datetime
+    exit_time: datetime | None = None
+    pnl_usdt: float = 0.0
+    pnl_pct: float = 0.0
+    fees: float = 0.0
+    strategy_name: str = ""
+    entry_reason: str = ""
+    exit_reason: str = ""
+    status: str = "CLOSED"
+    metadata_json: str | None = None
 
 
 class TradeListResponse(BaseModel):
@@ -95,10 +95,9 @@ class TradeJournalResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
-    trade_id: int
+    id: str
+    trade_id: str
     notes: str
-    tags: list[str]
-    rating: int | None = None
+    tags_json: str = "[]"
     created_at: datetime
     updated_at: datetime | None = None

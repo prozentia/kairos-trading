@@ -1,5 +1,7 @@
 # Kairos Trading - Docker Compose (Development)
 # Usage: docker compose up -d
+# Fournit uniquement PostgreSQL et Redis pour le dev local.
+# L'API, l'engine, etc. se lancent manuellement via uvicorn / python -m
 
 services:
   db:

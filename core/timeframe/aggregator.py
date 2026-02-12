@@ -92,7 +92,61 @@ class TimeframeAggregator:
         Returns:
             Completed Candle or None if the period is still open.
         """
-        raise NotImplementedError
+        tf_minutes = TIMEFRAME_MINUTES[target_tf]
+        key = (candle.pair, target_tf)
+
+        # Determine the period this candle belongs to.
+        current_period_start = self._period_start(candle.timestamp, tf_minutes)
+
+        buf = self._buffers[key]
+
+        # If the buffer has candles from a previous period, finalize
+        # that period first, then start a new one.
+        if buf:
+            first_period_start = self._period_start(buf[0].timestamp, tf_minutes)
+            if current_period_start != first_period_start:
+                # The previous period is complete -- build the candle.
+                completed = self._build_candle(buf, candle.pair, target_tf, first_period_start)
+                buf.clear()
+                buf.append(candle)
+                return completed
+
+        # Same period or first candle: accumulate.
+        buf.append(candle)
+
+        # Check if this is the last minute of the period.
+        # The period is complete when we have tf_minutes candles
+        # OR the next minute would start a new period.
+        next_minute = candle.timestamp + timedelta(minutes=1)
+        next_period_start = self._period_start(next_minute, tf_minutes)
+
+        if next_period_start != current_period_start:
+            # This was the last 1m candle of the period.
+            completed = self._build_candle(buf, candle.pair, target_tf, current_period_start)
+            buf.clear()
+            return completed
+
+        return None
+
+    @staticmethod
+    def _build_candle(
+        candles_1m: list[Candle],
+        pair: str,
+        timeframe: str,
+        period_start: datetime,
+    ) -> Candle:
+        """Merge a list of 1m candles into a single higher-TF candle."""
+        return Candle(
+            timestamp=period_start,
+            open=candles_1m[0].open,
+            high=max(c.high for c in candles_1m),
+            low=min(c.low for c in candles_1m),
+            close=candles_1m[-1].close,
+            volume=sum(c.volume for c in candles_1m),
+            pair=pair,
+            timeframe=timeframe,
+            is_closed=True,
+        )
 
     def _period_start(self, timestamp: datetime, tf_minutes: int) -> datetime:
         """Calculate the start of the period that *timestamp* belongs to.

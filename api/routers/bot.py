@@ -5,8 +5,12 @@ from pydantic import BaseModel
 
 from api.auth.jwt import get_current_active_user
 from api.schemas.common import SuccessResponse
+from api.services.bot_manager import BotManager
 
 router = APIRouter()
+
+# Shared service instance
+_bot_manager = BotManager()
 
 
 # ---------------------------------------------------------------------------
@@ -66,8 +70,8 @@ async def bot_status(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Get current bot status."""
-    # TODO: call bot_manager.get_status()
-    return BotStatusResponse()
+    data = await _bot_manager.get_status()
+    return BotStatusResponse(**data)
 
 
 # ---------------------------------------------------------------------------
@@ -79,8 +83,13 @@ async def start_bot(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Start the trading bot."""
-    # TODO: call bot_manager.start()
-    return SuccessResponse(message="Bot start command sent")
+    result = await _bot_manager.start()
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=result.get("message", "Failed to start bot"),
+        )
+    return SuccessResponse(message=result.get("message", "Bot start command sent"))
 
 
 @router.post("/stop", response_model=SuccessResponse)
@@ -88,8 +97,13 @@ async def stop_bot(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Stop the trading bot gracefully."""
-    # TODO: call bot_manager.stop()
-    return SuccessResponse(message="Bot stop command sent")
+    result = await _bot_manager.stop()
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=result.get("message", "Failed to stop bot"),
+        )
+    return SuccessResponse(message=result.get("message", "Bot stop command sent"))
 
 
 @router.post("/restart", response_model=SuccessResponse)
@@ -97,8 +111,13 @@ async def restart_bot(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Restart the trading bot."""
-    # TODO: call bot_manager.restart()
-    return SuccessResponse(message="Bot restart command sent")
+    result = await _bot_manager.restart()
+    if not result.get("success"):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=result.get("message", "Failed to restart bot"),
+        )
+    return SuccessResponse(message=result.get("message", "Bot restart command sent"))
 
 
 # ---------------------------------------------------------------------------
@@ -110,8 +129,8 @@ async def get_config(
     current_user: dict = Depends(get_current_active_user),
 ):
     """Get current bot configuration."""
-    # TODO: read from config file / DB
-    return BotConfigResponse()
+    config = await _bot_manager.get_config()
+    return BotConfigResponse(**config)
 
 
 @router.put("/config", response_model=BotConfigResponse)
@@ -123,11 +142,9 @@ async def update_config(
 
     Note: some changes require a bot restart to take effect.
     """
-    # TODO: validate + write to config file / DB
-    raise HTTPException(
-        status_code=status.HTTP_501_NOT_IMPLEMENTED,
-        detail="Config update not yet wired",
-    )
+    updates = body.model_dump(exclude_unset=True)
+    new_config = await _bot_manager.update_config(updates)
+    return BotConfigResponse(**new_config)
 
 
 # ---------------------------------------------------------------------------
@@ -144,5 +161,5 @@ async def get_logs(
 
     Returns: {"lines": ["2026-02-11 10:00:00 [INFO] ...", ...]}.
     """
-    # TODO: call bot_manager.get_logs(lines, level)
-    return {"lines": []}
+    log_lines = await _bot_manager.get_logs(lines=lines, level=level)
+    return {"lines": log_lines}

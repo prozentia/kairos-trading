@@ -33,15 +33,15 @@ async def lifespan(app: FastAPI):
     Startup: initialise database connection pool, Redis, seed data.
     Shutdown: close connections gracefully.
     """
+    from api.deps import init_db, close_db
+
     # -- Startup ---------------------------------------------------------------
-    # TODO: init PostgreSQL connection pool (async SQLAlchemy)
-    # TODO: init Redis connection
-    # TODO: run Alembic migrations / seed default data
     print("[Kairos API] Starting up...")
+    await init_db()
+    print("[Kairos API] Database initialised.")
     yield
     # -- Shutdown --------------------------------------------------------------
-    # TODO: close DB pool
-    # TODO: close Redis
+    await close_db()
     print("[Kairos API] Shutting down...")
 
 

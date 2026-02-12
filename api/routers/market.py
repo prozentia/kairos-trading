@@ -1,10 +1,14 @@
 """Market data router - price, candles, ticker, order book."""
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query
 
 from api.auth.jwt import get_current_active_user
+from api.services.market_service import MarketService
 
 router = APIRouter()
+
+# Shared service instance (no DB dependency, optional Redis)
+_market_service = MarketService()
 
 
 # ---------------------------------------------------------------------------
@@ -20,20 +24,18 @@ async def get_price(
 
     Returns: {"pair": "BTCUSDT", "price": 98250.50, "timestamp": "..."}
     """
-    # TODO: call market_service.get_price(pair)
-    return {"pair": pair.upper(), "price": 0.0, "timestamp": None}
+    return await _market_service.get_price(pair)
 
 
 @router.get("/prices")
 async def get_all_prices(
     current_user: dict = Depends(get_current_active_user),
 ):
-    """Get current prices for all active pairs.
+    """Get current prices for all active USDT pairs.
 
-    Returns a list of {pair, price, change_24h_pct}.
+    Returns a list of {pair, price, change_24h_pct, volume_24h}.
     """
-    # TODO: call market_service.get_all_prices()
-    return []
+    return await _market_service.get_all_prices()
 
 
 # ---------------------------------------------------------------------------
@@ -51,8 +53,7 @@ async def get_candles(
 
     Returns a list of {timestamp, open, high, low, close, volume}.
     """
-    # TODO: call market_service.get_candles(pair, timeframe, limit)
-    return []
+    return await _market_service.get_candles(pair, timeframe, limit)
 
 
 # ---------------------------------------------------------------------------
@@ -68,15 +69,7 @@ async def get_ticker(
 
     Returns: {pair, price, high_24h, low_24h, volume_24h, change_24h_pct}.
     """
-    # TODO: call market_service.get_ticker(pair)
-    return {
-        "pair": pair.upper(),
-        "price": 0.0,
-        "high_24h": 0.0,
-        "low_24h": 0.0,
-        "volume_24h": 0.0,
-        "change_24h_pct": 0.0,
-    }
+    return await _market_service.get_ticker(pair)
 
 
 # ---------------------------------------------------------------------------
@@ -93,5 +86,4 @@ async def get_orderbook(
 
     Returns: {bids: [[price, qty], ...], asks: [[price, qty], ...]}.
     """
-    # TODO: call market_service.get_orderbook(pair, depth)
-    return {"pair": pair.upper(), "bids": [], "asks": []}
+    return await _market_service.get_orderbook(pair, depth)

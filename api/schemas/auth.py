@@ -70,10 +70,12 @@ class UserResponse(BaseModel):
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
+    id: str
     email: str
     username: str
-    telegram_chat_id: str | None = None
     is_active: bool = True
     created_at: datetime
-    updated_at: datetime | None = None
+
+
+# Resolve forward reference in LoginResponse
+LoginResponse.model_rebuild()
