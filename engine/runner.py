@@ -235,6 +235,9 @@ class TradingRunner:
         # Step 3c: Restore open positions from DB
         await self._restore_open_positions()
 
+        # Step 3d: Restore today's daily stats from DB
+        await self._restore_daily_stats()
+
         # Step 4: Fetch exchange info and warm up indicators
         for pair in self._config.pairs:
             await self._initialize_pair(pair)
@@ -1372,6 +1375,77 @@ class TradingRunner:
             )
         except Exception as exc:
             logger.error("Failed to restore open positions: %s", exc)
+
+    async def _restore_daily_stats(self) -> None:
+        """Restore today's daily P&L and trade count from closed trades in DB.
+
+        This ensures the dashboard shows the correct daily P&L even after
+        an engine restart.
+        """
+        if self._repository is None:
+            return
+
+        try:
+            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            closed_today = await self._repository.get_trades(
+                filters={"status": "CLOSED", "date_from": today_str}
+            )
+            if not closed_today:
+                return
+
+            # Only count trades with actual exit data (skip orphan_cleanup)
+            real_trades = [
+                t for t in closed_today
+                if t.get("exit_price") and float(t.get("exit_price", 0)) > 0
+                and t.get("exit_reason", "") not in ("orphan_cleanup", "already_sold_before_restart")
+            ]
+
+            # Deduplicate by (pair, entry_time) — keep the one with exit_time
+            seen: set[str] = set()
+            unique_trades: list[dict] = []
+            for t in real_trades:
+                key = f"{t.get('pair')}_{t.get('entry_time')}"
+                if key not in seen:
+                    seen.add(key)
+                    unique_trades.append(t)
+
+            pnl_total = 0.0
+            for t in unique_trades:
+                pnl = float(t.get("pnl_usdt", 0))
+                pnl_total += pnl
+
+                # Rebuild Trade object for _daily_trades list
+                entry_time = t.get("entry_time")
+                if isinstance(entry_time, str):
+                    entry_time = datetime.fromisoformat(entry_time)
+                exit_time = t.get("exit_time")
+                if isinstance(exit_time, str):
+                    exit_time = datetime.fromisoformat(exit_time)
+
+                trade = Trade(
+                    id=t.get("id", ""),
+                    pair=t.get("pair", ""),
+                    side=t.get("side", "BUY"),
+                    entry_price=float(t.get("entry_price", 0)),
+                    exit_price=float(t.get("exit_price", 0)),
+                    quantity=float(t.get("quantity", 0)),
+                    entry_time=entry_time,
+                    exit_time=exit_time,
+                    pnl_usdt=pnl,
+                    pnl_pct=float(t.get("pnl_pct", 0)),
+                    strategy_name=t.get("strategy_name", ""),
+                    exit_reason=t.get("exit_reason", ""),
+                )
+                self._daily_trades.append(trade)
+
+            self._daily_trade_count = len(unique_trades)
+            self._daily_pnl_usdt = pnl_total
+            logger.info(
+                "Restored daily stats: %d trades, PnL=%.2f USDT",
+                self._daily_trade_count, self._daily_pnl_usdt,
+            )
+        except Exception as exc:
+            logger.error("Failed to restore daily stats: %s", exc)
 
     async def _save_trade_to_db(
         self,
