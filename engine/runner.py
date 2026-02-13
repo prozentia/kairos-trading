@@ -1386,9 +1386,11 @@ class TradingRunner:
             return
 
         try:
-            today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            today_start = datetime.now(timezone.utc).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
             closed_today = await self._repository.get_trades(
-                filters={"status": "CLOSED", "date_from": today_str}
+                filters={"status": "CLOSED", "date_from": today_start}
             )
             if not closed_today:
                 return
