@@ -15,6 +15,7 @@ COPY core/ core/
 COPY adapters/ adapters/
 COPY api/ api/
 COPY engine/ engine/
+COPY scripts/ scripts/
 
 EXPOSE 8000
 

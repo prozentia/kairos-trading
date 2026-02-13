@@ -60,14 +60,25 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
 done
 
 if [ $RETRY -eq $MAX_RETRIES ]; then
-    echo "[WARN] L'API n'a pas repondu au healthcheck dans le delai imparti."
-    echo "       Verification des logs..."
+    echo "[ERREUR] L'API n'a pas repondu au healthcheck dans le delai imparti."
+    echo "         Verification des logs..."
     docker compose -f "$COMPOSE_FILE" logs --tail=20 api
+    exit 1
 fi
 
 # Lancer les migrations Alembic
 echo "       Lancement des migrations Alembic..."
-docker compose -f "$COMPOSE_FILE" exec -T api alembic upgrade head
+docker compose -f "$COMPOSE_FILE" exec -T api alembic upgrade head || {
+    echo "[ERREUR] Les migrations Alembic ont echoue."
+    docker compose -f "$COMPOSE_FILE" logs --tail=20 api
+    exit 1
+}
+
+# Seed des strategies par defaut
+echo "       Seed des strategies par defaut..."
+docker compose -f "$COMPOSE_FILE" exec -T api python -m scripts.seed_strategies || {
+    echo "[WARN] Le seed des strategies a echoue (non-bloquant)."
+}
 
 echo ""
 echo "============================================"

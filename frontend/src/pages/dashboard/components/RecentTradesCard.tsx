@@ -22,7 +22,7 @@ interface RecentTradesCardProps {
 
 const RecentTradesCard = ({ trades, isLoading }: RecentTradesCardProps) => {
   // Show max 8 recent trades
-  const recentTrades = trades.slice(0, 8);
+  const recentTrades = (trades ?? []).slice(0, 8);
 
   return (
     <Card>

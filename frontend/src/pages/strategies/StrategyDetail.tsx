@@ -209,7 +209,7 @@ const StrategyDetail = () => {
                 Trading Pairs
               </p>
               <div className="flex flex-wrap gap-1.5">
-                {strategy.pairs.map((pair) => (
+                {(strategy.pairs ?? []).map((pair) => (
                   <Badge key={pair} variant="outline" className="text-xs">
                     {pair}
                   </Badge>
@@ -218,13 +218,13 @@ const StrategyDetail = () => {
             </div>
 
             {/* Required indicators */}
-            {strategy.indicators_needed.length > 0 && (
+            {(strategy.indicators_needed ?? []).length > 0 && (
               <div>
                 <p className="text-xs text-muted-foreground mb-2">
                   Indicators Used
                 </p>
                 <div className="flex flex-wrap gap-1.5">
-                  {strategy.indicators_needed.map((ind) => (
+                  {(strategy.indicators_needed ?? []).map((ind) => (
                     <Badge key={ind} variant="secondary" className="text-xs">
                       {ind}
                     </Badge>
@@ -248,13 +248,13 @@ const StrategyDetail = () => {
               <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-xs text-muted-foreground">Stop Loss</p>
                 <p className="text-lg font-bold text-red-600 dark:text-red-400">
-                  {strategy.risk.stop_loss_pct}%
+                  {strategy.risk?.stop_loss_pct ?? 0}%
                 </p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
                 <p className="text-xs text-muted-foreground">Max Position</p>
                 <p className="text-lg font-bold">
-                  {strategy.risk.max_position_size_pct}%
+                  {strategy.risk?.max_position_size_pct ?? 0}%
                 </p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
@@ -262,7 +262,7 @@ const StrategyDetail = () => {
                   Trailing Activation
                 </p>
                 <p className="text-lg font-bold">
-                  {strategy.risk.trailing_activation_pct}%
+                  {strategy.risk?.trailing_activation_pct ?? 0}%
                 </p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
@@ -270,18 +270,18 @@ const StrategyDetail = () => {
                   Trailing Distance
                 </p>
                 <p className="text-lg font-bold">
-                  {strategy.risk.trailing_distance_pct}%
+                  {strategy.risk?.trailing_distance_pct ?? 0}%
                 </p>
               </div>
             </div>
 
-            {strategy.risk.take_profit_levels.length > 0 && (
+            {(strategy.risk?.take_profit_levels ?? []).length > 0 && (
               <div className="mt-4">
                 <p className="text-xs text-muted-foreground mb-2">
                   Take Profit Levels
                 </p>
                 <div className="space-y-1.5">
-                  {strategy.risk.take_profit_levels.map((tp, i) => (
+                  {(strategy.risk?.take_profit_levels ?? []).map((tp, i) => (
                     <div
                       key={i}
                       className="flex items-center justify-between bg-green-50/10 rounded p-2 text-sm"
@@ -305,17 +305,17 @@ const StrategyDetail = () => {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <Zap className="w-4 h-4 text-green-500" />
-              Entry Conditions ({strategy.entry_conditions.length})
+              Entry Conditions ({(strategy.entry_conditions ?? []).length})
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {strategy.entry_conditions.length === 0 ? (
+            {(strategy.entry_conditions ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No entry conditions defined.
               </p>
             ) : (
               <div className="space-y-2">
-                {strategy.entry_conditions.map((cond, i) => (
+                {(strategy.entry_conditions ?? []).map((cond, i) => (
                   <div
                     key={i}
                     className="flex items-center gap-2 bg-green-50/5 border border-green-500/10 rounded-lg p-3"
@@ -334,7 +334,7 @@ const StrategyDetail = () => {
                       <span className="font-mono text-primary">
                         {cond.value !== null ? String(cond.value) : "null"}
                       </span>
-                      {Object.keys(cond.params).length > 0 && (
+                      {Object.keys(cond.params ?? {}).length > 0 && (
                         <span className="text-muted-foreground/60 text-xs ml-2">
                           ({JSON.stringify(cond.params)})
                         </span>
@@ -352,17 +352,17 @@ const StrategyDetail = () => {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <Zap className="w-4 h-4 text-red-500" />
-              Exit Conditions ({strategy.exit_conditions.length})
+              Exit Conditions ({(strategy.exit_conditions ?? []).length})
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {strategy.exit_conditions.length === 0 ? (
+            {(strategy.exit_conditions ?? []).length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No exit conditions defined.
               </p>
             ) : (
               <div className="space-y-2">
-                {strategy.exit_conditions.map((cond, i) => (
+                {(strategy.exit_conditions ?? []).map((cond, i) => (
                   <div
                     key={i}
                     className="flex items-center gap-2 bg-red-50/5 border border-red-500/10 rounded-lg p-3"
@@ -381,7 +381,7 @@ const StrategyDetail = () => {
                       <span className="font-mono text-primary">
                         {cond.value !== null ? String(cond.value) : "null"}
                       </span>
-                      {Object.keys(cond.params).length > 0 && (
+                      {Object.keys(cond.params ?? {}).length > 0 && (
                         <span className="text-muted-foreground/60 text-xs ml-2">
                           ({JSON.stringify(cond.params)})
                         </span>

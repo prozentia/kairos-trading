@@ -13,7 +13,7 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, AsyncGenerator
 
 from sqlalchemy import select, and_

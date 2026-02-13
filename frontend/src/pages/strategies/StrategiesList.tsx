@@ -180,7 +180,7 @@ const StrategiesList = () => {
 
                 {/* Metadata */}
                 <div className="flex flex-wrap gap-1.5">
-                  {strategy.pairs.slice(0, 3).map((pair) => (
+                  {(strategy.pairs ?? []).slice(0, 3).map((pair) => (
                     <Badge
                       key={pair}
                       variant="outline"
@@ -189,12 +189,12 @@ const StrategiesList = () => {
                       {pair}
                     </Badge>
                   ))}
-                  {strategy.pairs.length > 3 && (
+                  {(strategy.pairs ?? []).length > 3 && (
                     <Badge
                       variant="outline"
                       className="text-[10px] px-2 py-0"
                     >
-                      +{strategy.pairs.length - 3}
+                      +{(strategy.pairs ?? []).length - 3}
                     </Badge>
                   )}
                   <Badge variant="secondary" className="text-[10px] px-2 py-0">
@@ -205,12 +205,12 @@ const StrategiesList = () => {
                 {/* Conditions count */}
                 <div className="flex items-center gap-4 text-xs text-muted-foreground">
                   <span>
-                    {strategy.entry_conditions.length} entry condition
-                    {strategy.entry_conditions.length !== 1 ? "s" : ""}
+                    {(strategy.entry_conditions ?? []).length} entry condition
+                    {(strategy.entry_conditions ?? []).length !== 1 ? "s" : ""}
                   </span>
                   <span>
-                    {strategy.exit_conditions.length} exit condition
-                    {strategy.exit_conditions.length !== 1 ? "s" : ""}
+                    {(strategy.exit_conditions ?? []).length} exit condition
+                    {(strategy.exit_conditions ?? []).length !== 1 ? "s" : ""}
                   </span>
                 </div>
 
