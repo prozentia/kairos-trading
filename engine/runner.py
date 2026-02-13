@@ -653,6 +653,17 @@ class TradingRunner:
             symbol_info=symbol_info,
         )
 
+        # Cap notional to max_position_size_pct of balance.
+        max_pct = risk_config.get("max_position_size_pct", 10.0)
+        max_notional = self._balance * (max_pct / 100.0)
+        if entry_price > 0 and quantity * entry_price > max_notional:
+            quantity = max_notional / entry_price
+            # Re-clamp to exchange constraints.
+            if symbol_info is not None:
+                quantity = self._position_sizer._clamp_to_symbol(
+                    quantity, entry_price, symbol_info
+                )
+
         if quantity <= 0.0:
             logger.info("Position size is zero for %s, skipping", pair)
             return
