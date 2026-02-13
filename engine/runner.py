@@ -788,12 +788,14 @@ class TradingRunner:
             # Place stop-loss order on exchange
             try:
                 tick_size = symbol_info.tick_size if symbol_info else 0.01
-                await self._exchange_rest.set_stop_loss(
+                sl_result = await self._exchange_rest.set_stop_loss(
                     pair=pair,
                     quantity=actual_qty,
                     stop_price=stop_loss_price,
                     tick_size=tick_size,
                 )
+                # Store the SL order ID so we can cancel it on exit.
+                position.metadata["sl_order_id"] = str(sl_result.get("orderId", ""))
                 logger.info("Stop-loss set for %s at %.2f", pair, stop_loss_price)
             except Exception as exc:
                 logger.error("Failed to set stop-loss for %s: %s", pair, exc)
@@ -896,6 +898,11 @@ class TradingRunner:
                 pair, position.quantity, exit_price, reason,
             )
         else:
+            # Cancel the exchange stop-loss order first to free locked qty.
+            sl_order_id = position.metadata.get("sl_order_id")
+            if sl_order_id and self._exchange_rest is not None:
+                await self._exchange_rest.cancel_order(pair, sl_order_id)
+
             # Live mode: place market sell order
             try:
                 order_result = await self._exchange_rest.place_order(
