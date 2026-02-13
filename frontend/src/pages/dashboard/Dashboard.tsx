@@ -18,9 +18,20 @@ const TRUST_LEVEL_SCORES: Record<string, number> = {
   SPRINT: 90,
 };
 
+const DEFAULT_PAIRS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT"];
+
 const Dashboard = () => {
   // Bot status (strategy, trust level)
   const { status: botStatus } = useBotStatus();
+
+  // Selected pair for the chart
+  const [selectedPair, setSelectedPair] = useState("BTCUSDT");
+
+  // Available pairs from engine, fallback to defaults
+  const pairs =
+    botStatus?.pairs_active && botStatus.pairs_active.length > 0
+      ? botStatus.pairs_active
+      : DEFAULT_PAIRS;
 
   // Portfolio data (balance, positions, P&L)
   const [portfolio, setPortfolio] = useState<PortfolioOverview | null>(null);
@@ -66,7 +77,11 @@ const Dashboard = () => {
       {/* Main content grid: chart + sidebar */}
       <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
         {/* Live chart - takes 2 columns */}
-        <LiveChartCard pair="BTCUSDT" />
+        <LiveChartCard
+          pair={selectedPair}
+          pairs={pairs}
+          onPairChange={setSelectedPair}
+        />
 
         {/* Sidebar: bot control + trust score */}
         <div className="space-y-6">

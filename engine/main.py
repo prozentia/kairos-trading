@@ -111,7 +111,8 @@ async def main() -> None:
                 bot_token=config.telegram_bot_token,
                 default_chat_id=config.telegram_chat_id,
             )
-            logger.info("Telegram notifier initialized")
+            await notifier.start()
+            logger.info("Telegram notifier initialized and started")
         except ImportError:
             logger.warning("Telegram notifier not available")
 
@@ -163,6 +164,13 @@ async def main() -> None:
         logger.info("Shutting down engine...")
         await runner.stop()
         await health_server.stop()
+
+        # Stop notifier
+        if notifier is not None:
+            try:
+                await notifier.stop()
+            except Exception:
+                pass
 
         # Close database connection if we opened it
         if repository is not None:
