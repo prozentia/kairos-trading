@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
+import ConditionBuilder from "@/components/strategy/ConditionBuilder";
 import type { Strategy, StrategyValidation } from "@/types";
 import {
   AlertTriangle,
@@ -173,13 +174,23 @@ const StrategyBuilder = () => {
       toast.error("Strategy name is required");
       return;
     }
+    // Auto-compute indicators_needed from conditions
+    const indicators = new Set<string>();
+    for (const c of strategy.entry_conditions ?? []) indicators.add(c.indicator);
+    for (const c of strategy.exit_conditions ?? []) indicators.add(c.indicator);
+    for (const f of strategy.filters ?? []) {
+      const ind = f.params?.indicator;
+      if (typeof ind === "string") indicators.add(ind);
+    }
+    const toSave = { ...strategy, indicators_needed: [...indicators] };
+
     setIsSaving(true);
     try {
       if (isEditing && id) {
-        await updateStrategy(id, strategy);
+        await updateStrategy(id, toSave);
         toast.success("Strategy updated");
       } else {
-        const created = await createStrategy(strategy);
+        const created = await createStrategy(toSave);
         toast.success("Strategy created");
         navigate(`/strategies/${created.id}`);
       }
@@ -455,58 +466,21 @@ const StrategyBuilder = () => {
             </CardContent>
           </Card>
 
-          {/* Conditions preview (JSON) */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Conditions (JSON)</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label>Entry Conditions</Label>
-                <Textarea
-                  className="font-mono text-xs min-h-[120px]"
-                  value={JSON.stringify(
-                    strategy.entry_conditions ?? [],
-                    null,
-                    2
-                  )}
-                  onChange={(e) => {
-                    try {
-                      updateField(
-                        "entry_conditions",
-                        JSON.parse(e.target.value)
-                      );
-                    } catch {
-                      // Invalid JSON while typing
-                    }
-                  }}
-                  placeholder="[]"
-                />
-              </div>
-              <div className="space-y-2">
-                <Label>Exit Conditions</Label>
-                <Textarea
-                  className="font-mono text-xs min-h-[120px]"
-                  value={JSON.stringify(
-                    strategy.exit_conditions ?? [],
-                    null,
-                    2
-                  )}
-                  onChange={(e) => {
-                    try {
-                      updateField(
-                        "exit_conditions",
-                        JSON.parse(e.target.value)
-                      );
-                    } catch {
-                      // Invalid JSON while typing
-                    }
-                  }}
-                  placeholder="[]"
-                />
-              </div>
-            </CardContent>
-          </Card>
+          {/* Entry Conditions (visual builder) */}
+          <ConditionBuilder
+            label="Conditions d'entree"
+            conditions={strategy.entry_conditions ?? []}
+            onChange={(conds) => updateField("entry_conditions", conds)}
+            variant="entry"
+          />
+
+          {/* Exit Conditions (visual builder) */}
+          <ConditionBuilder
+            label="Conditions de sortie"
+            conditions={strategy.exit_conditions ?? []}
+            onChange={(conds) => updateField("exit_conditions", conds)}
+            variant="exit"
+          />
         </div>
       )}
     </div>
