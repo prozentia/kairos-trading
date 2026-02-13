@@ -157,6 +157,16 @@ const BotControl = () => {
                   )}
                 </div>
 
+                {/* Active strategy */}
+                {status?.strategy && (
+                  <div className="bg-primary/10 rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground">Active Strategy</p>
+                    <p className="text-base font-bold text-primary">
+                      {status.strategy}
+                    </p>
+                  </div>
+                )}
+
                 {/* Stats */}
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-muted/50 rounded-lg p-3">
@@ -174,9 +184,22 @@ const BotControl = () => {
                     </p>
                   </div>
                   <div className="bg-muted/50 rounded-lg p-3">
-                    <p className="text-xs text-muted-foreground">Active Pairs</p>
+                    <p className="text-xs text-muted-foreground">Daily Trades</p>
                     <p className="text-lg font-bold">
-                      {status?.pairs_active?.length ?? 0}
+                      {status?.daily_trades ?? 0}
+                    </p>
+                  </div>
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground">Daily P&L</p>
+                    <p
+                      className={`text-lg font-bold ${
+                        (status?.daily_pnl_usdt ?? 0) >= 0
+                          ? "text-green-600 dark:text-green-400"
+                          : "text-red-600 dark:text-red-400"
+                      }`}
+                    >
+                      {(status?.daily_pnl_usdt ?? 0) >= 0 ? "+" : ""}
+                      {(status?.daily_pnl_usdt ?? 0).toFixed(2)} USDT
                     </p>
                   </div>
                   <div className="bg-muted/50 rounded-lg p-3">
@@ -189,6 +212,12 @@ const BotControl = () => {
                       }`}
                     >
                       {status?.mode === "live" ? "LIVE" : "DRY"}
+                    </p>
+                  </div>
+                  <div className="bg-muted/50 rounded-lg p-3">
+                    <p className="text-xs text-muted-foreground">Trust Level</p>
+                    <p className="text-lg font-bold">
+                      {status?.trust_level ?? "—"}
                     </p>
                   </div>
                 </div>

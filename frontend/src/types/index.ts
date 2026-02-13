@@ -143,6 +143,11 @@ export interface BotStatus {
   last_signal_time: string | null;
   mode: "dry_run" | "live";
   version: string;
+  strategy: string;
+  daily_trades: number;
+  daily_pnl_usdt: number;
+  trust_level: string;
+  circuit_breaker: boolean;
 }
 
 export interface BotConfig {
