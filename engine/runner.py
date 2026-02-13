@@ -103,9 +103,10 @@ class TradingRunner:
         self._position_manager = PositionManager()
         self._position_sizer = PositionSizer(self._risk_limits)
         self._portfolio_manager = PortfolioManager(self._risk_limits)
-        self._timeframe_aggregator = TimeframeAggregator(
-            target_timeframes=[config.strategy_timeframe],
-        )
+        # TimeframeAggregator is created lazily after strategy is loaded,
+        # because the strategy may override the timeframe.
+        self._timeframe_aggregator: TimeframeAggregator | None = None
+        self._effective_strategy_tf: str = config.strategy_timeframe
         self._candle_buffer = CandleBuffer(max_size=1000)
 
         # ---- Active strategy ----
@@ -129,6 +130,10 @@ class TradingRunner:
         # Tracking for periodic saves
         self._last_stats_save: float = 0.0
         self._last_state_cache: float = 0.0
+
+        # Counter for periodic INFO logging.
+        self._candle_count: int = 0
+        self._strategy_eval_count: int = 0
 
         # Circuit breaker state
         self._circuit_breaker_active = False
@@ -326,19 +331,33 @@ class TradingRunner:
             await self._update_trailing_on_tick(pair, candle.close, candle.timestamp)
             return
 
-        logger.debug("Processing closed candle for %s at %s", pair, candle.timestamp)
+        self._candle_count += 1
+        # Periodic INFO log every 10 closed candles for monitoring.
+        if self._candle_count % 10 == 0:
+            logger.info(
+                "Heartbeat: %d candles processed, %d strategy evals, "
+                "%d trades today, positions=%d",
+                self._candle_count,
+                self._strategy_eval_count,
+                self._daily_trade_count,
+                len(self._open_positions),
+            )
 
-        # Step 1: Aggregate to higher timeframes
-        completed_candles = self._timeframe_aggregator.on_candle(candle)
+        if self._timeframe_aggregator is not None:
+            # Aggregate 1m candles into higher timeframe (e.g. 5m).
+            completed_candles = self._timeframe_aggregator.on_candle(candle)
 
-        # Step 2: Buffer higher-TF candles
-        for htf_candle in completed_candles:
-            self._candle_buffer.add(htf_candle)
+            # Buffer higher-TF candles.
+            for htf_candle in completed_candles:
+                self._candle_buffer.add(htf_candle)
 
-        # Step 3: Process each completed higher-TF candle through the pipeline
-        for htf_candle in completed_candles:
-            if htf_candle.timeframe == self._config.strategy_timeframe:
-                await self._process_strategy_candle(pair, htf_candle)
+            # Process each completed higher-TF candle through the pipeline.
+            for htf_candle in completed_candles:
+                if htf_candle.timeframe == self._effective_strategy_tf:
+                    await self._process_strategy_candle(pair, htf_candle)
+        else:
+            # Strategy runs on base timeframe -- process directly.
+            await self._process_strategy_candle(pair, candle)
 
         # Step 4: Check exits on the base-TF candle price
         await self._check_exits(pair, candle)
@@ -399,6 +418,8 @@ class TradingRunner:
                 self._circuit_breaker_until = None
                 logger.info("Circuit breaker cleared")
 
+        self._strategy_eval_count += 1
+
         # Step 1: Update indicators
         indicator_states = self._update_indicators(pair, candle)
 
@@ -406,7 +427,7 @@ class TradingRunner:
         has_position = pair in self._open_positions
         context = {
             "pair": pair,
-            "timeframe": self._config.strategy_timeframe,
+            "timeframe": self._effective_strategy_tf,
             "price": candle.close,
             "timestamp": candle.timestamp,
             "has_position": has_position,
@@ -1061,6 +1082,7 @@ class TradingRunner:
                         raw_def = json.loads(raw_def)
                     self._strategy_config = self._strategy_loader.load_from_dict(raw_def)
                     logger.info("Strategy loaded from DB: %s", self._strategy_config.name)
+                    self._setup_timeframe_aggregator()
                     return
             except Exception as exc:
                 logger.warning("Failed to load strategy from DB: %s", exc)
@@ -1078,6 +1100,37 @@ class TradingRunner:
             is_active=True,
         )
         logger.info("Using default strategy config: %s", self._strategy_config.name)
+        self._setup_timeframe_aggregator()
+
+    def _setup_timeframe_aggregator(self) -> None:
+        """Configure the timeframe aggregator based on the loaded strategy.
+
+        If the strategy timeframe equals the base timeframe (1m), no
+        aggregation is needed and the aggregator is set to None.
+        Otherwise, it aggregates 1m candles into the strategy timeframe.
+        """
+        strategy_tf = (
+            self._strategy_config.timeframe
+            if self._strategy_config
+            else self._config.strategy_timeframe
+        )
+        self._effective_strategy_tf = strategy_tf
+
+        if strategy_tf == self._config.base_timeframe:
+            # Strategy runs on base timeframe (e.g. 1m) -- no aggregation.
+            self._timeframe_aggregator = None
+            logger.info(
+                "Strategy timeframe = base timeframe (%s), no aggregation needed",
+                strategy_tf,
+            )
+        else:
+            self._timeframe_aggregator = TimeframeAggregator(
+                target_timeframes=[strategy_tf],
+            )
+            logger.info(
+                "Timeframe aggregator configured: %s -> %s",
+                self._config.base_timeframe, strategy_tf,
+            )
 
     # ------------------------------------------------------------------
     # Pair initialization
@@ -1104,7 +1157,7 @@ class TradingRunner:
             try:
                 historical = await self._exchange_rest.get_klines(
                     pair,
-                    self._config.strategy_timeframe,
+                    self._effective_strategy_tf,
                     limit=500,
                 )
                 self._warm_up_indicators(pair, historical)

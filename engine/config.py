@@ -114,6 +114,7 @@ class EngineConfig:
             "KAIROS_USE_FULL_BALANCE": "use_full_balance",
             "KAIROS_BASE_TIMEFRAME": "base_timeframe",
             "KAIROS_STRATEGY_TIMEFRAME": "strategy_timeframe",
+            "KAIROS_TIMEFRAME": "strategy_timeframe",
             "KAIROS_STRATEGY_TYPE": "strategy_type",
             "KAIROS_STOP_LOSS_PCT": "stop_loss_pct",
             "KAIROS_TRAILING_ACTIVATION_PCT": "trailing_activation_pct",
