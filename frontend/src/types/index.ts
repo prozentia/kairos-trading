@@ -98,11 +98,11 @@ export interface Filter {
 }
 
 export interface RiskConfig {
-  stop_loss_pct: number;
-  trailing_activation_pct: number;
-  trailing_distance_pct: number;
-  take_profit_levels: Array<Record<string, number>>;
-  max_position_size_pct: number;
+  stop_loss_pct?: number;
+  trailing_activation_pct?: number;
+  trailing_distance_pct?: number;
+  take_profit_levels?: Array<Record<string, number>>;
+  max_position_size_pct?: number;
 }
 
 export interface Strategy {
