@@ -1206,7 +1206,7 @@ class TradingRunner:
 
         try:
             stats = self._portfolio_manager.calculate_daily_stats(self._daily_trades)
-            stats["date"] = datetime.now(timezone.utc).date().isoformat()
+            stats["date"] = datetime.now(timezone.utc).date()
             stats["mode"] = self.mode
             stats["trust_level"] = self._get_trust_level()
             stats["open_positions"] = self.open_positions_count

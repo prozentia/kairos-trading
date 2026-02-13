@@ -743,7 +743,7 @@ class PostgresRepository(BaseRepository):
         Maps keys from engine/portfolio stats to DailyStat model columns.
         """
         mapped = {
-            "date": stats.get("date", datetime.now(timezone.utc).date().isoformat()),
+            "date": stats.get("date") or datetime.now(timezone.utc).date(),
             "pair": stats.get("pair", "ALL"),
             "total_trades": stats.get("total_trades", 0),
             "winning_trades": stats.get("wins", stats.get("winning_trades", 0)),
