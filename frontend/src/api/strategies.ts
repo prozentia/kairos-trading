@@ -26,7 +26,7 @@ function parseStrategy(raw: ApiStrategy): Strategy {
     /* keep empty */
   }
   return {
-    id: raw.id as unknown as number,
+    id: raw.id,
     name: raw.name,
     description: raw.description,
     version: raw.version,
@@ -58,42 +58,42 @@ export async function getStrategies(): Promise<StrategyListResponse> {
   };
 }
 
-export async function getStrategy(id: number): Promise<Strategy> {
+export async function getStrategy(id: string): Promise<Strategy> {
   const response = await apiClient.get<ApiStrategy>(`/strategies/${id}`);
   return parseStrategy(response.data);
 }
 
 export async function createStrategy(data: Partial<Strategy>): Promise<Strategy> {
-  const response = await apiClient.post<Strategy>("/strategies", data);
-  return response.data;
+  const response = await apiClient.post<ApiStrategy>("/strategies", data);
+  return parseStrategy(response.data);
 }
 
-export async function updateStrategy(id: number, data: Partial<Strategy>): Promise<Strategy> {
-  const response = await apiClient.put<Strategy>(`/strategies/${id}`, data);
-  return response.data;
+export async function updateStrategy(id: string, data: Partial<Strategy>): Promise<Strategy> {
+  const response = await apiClient.put<ApiStrategy>(`/strategies/${id}`, data);
+  return parseStrategy(response.data);
 }
 
-export async function deleteStrategy(id: number): Promise<SuccessResponse> {
+export async function deleteStrategy(id: string): Promise<SuccessResponse> {
   const response = await apiClient.delete<SuccessResponse>(`/strategies/${id}`);
   return response.data;
 }
 
-export async function activateStrategy(id: number): Promise<SuccessResponse> {
+export async function activateStrategy(id: string): Promise<SuccessResponse> {
   const response = await apiClient.post<SuccessResponse>(`/strategies/${id}/activate`);
   return response.data;
 }
 
-export async function deactivateStrategy(id: number): Promise<SuccessResponse> {
+export async function deactivateStrategy(id: string): Promise<SuccessResponse> {
   const response = await apiClient.post<SuccessResponse>(`/strategies/${id}/deactivate`);
   return response.data;
 }
 
-export async function validateStrategy(id: number): Promise<StrategyValidation> {
+export async function validateStrategy(id: string): Promise<StrategyValidation> {
   const response = await apiClient.post<StrategyValidation>(`/strategies/${id}/validate`);
   return response.data;
 }
 
-export async function duplicateStrategy(id: number): Promise<Strategy> {
-  const response = await apiClient.post<Strategy>(`/strategies/${id}/duplicate`);
-  return response.data;
+export async function duplicateStrategy(id: string): Promise<Strategy> {
+  const response = await apiClient.post<ApiStrategy>(`/strategies/${id}/duplicate`);
+  return parseStrategy(response.data);
 }

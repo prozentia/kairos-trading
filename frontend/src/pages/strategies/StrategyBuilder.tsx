@@ -84,7 +84,7 @@ const StrategyBuilder = () => {
     if (!id) return;
     setIsLoading(true);
     try {
-      const data = await getStrategy(Number(id));
+      const data = await getStrategy(id);
       setStrategy(data);
       setPairsInput(data.pairs.join(", "));
       setJsonInput(JSON.stringify(data, null, 2));
@@ -155,7 +155,7 @@ const StrategyBuilder = () => {
       return;
     }
     try {
-      const result = await validateStrategy(Number(id));
+      const result = await validateStrategy(id);
       setValidation(result);
       if (result.valid) {
         toast.success("Strategy is valid!");
@@ -176,7 +176,7 @@ const StrategyBuilder = () => {
     setIsSaving(true);
     try {
       if (isEditing && id) {
-        await updateStrategy(Number(id), strategy);
+        await updateStrategy(id, strategy);
         toast.success("Strategy updated");
       } else {
         const created = await createStrategy(strategy);

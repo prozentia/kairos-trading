@@ -38,7 +38,7 @@ const StrategiesList = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<Strategy | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
-  const [togglingId, setTogglingId] = useState<number | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   const fetchStrategies = useCallback(async () => {
     try {

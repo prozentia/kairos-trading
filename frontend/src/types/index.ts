@@ -106,7 +106,7 @@ export interface RiskConfig {
 }
 
 export interface Strategy {
-  id: number;
+  id: string;
   name: string;
   description: string;
   version: string;

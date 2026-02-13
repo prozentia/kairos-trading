@@ -38,7 +38,7 @@ const StrategyDetail = () => {
     if (!id) return;
     setIsLoading(true);
     try {
-      const data = await getStrategy(Number(id));
+      const data = await getStrategy(id);
       setStrategy(data);
     } catch {
       toast.error("Strategy not found");
