@@ -22,7 +22,7 @@ router = APIRouter()
 # List / Read
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_model=StrategyListResponse)
+@router.get("", response_model=StrategyListResponse)
 async def list_strategies(
     current_user: dict = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -57,7 +57,7 @@ async def get_strategy(
 # Create / Update / Delete
 # ---------------------------------------------------------------------------
 
-@router.post("/", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=StrategyResponse, status_code=status.HTTP_201_CREATED)
 async def create_strategy(
     body: StrategyCreateRequest,
     current_user: dict = Depends(get_current_active_user),

@@ -63,7 +63,7 @@ class BacktestResultResponse(BaseModel):
 # Launch
 # ---------------------------------------------------------------------------
 
-@router.post("/", response_model=BacktestStatusResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("", response_model=BacktestStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def launch_backtest(
     body: BacktestLaunchRequest,
     current_user: dict = Depends(get_current_active_user),
@@ -182,7 +182,7 @@ async def get_backtest(
 # List
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_model=list[BacktestResultResponse])
+@router.get("", response_model=list[BacktestResultResponse])
 async def list_backtests(
     strategy_id: str | None = Query(None),
     limit: int = Query(20, ge=1, le=100),

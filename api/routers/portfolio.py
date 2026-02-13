@@ -18,7 +18,7 @@ router = APIRouter()
 # Positions
 # ---------------------------------------------------------------------------
 
-@router.get("/")
+@router.get("")
 async def get_positions(
     current_user: dict = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),

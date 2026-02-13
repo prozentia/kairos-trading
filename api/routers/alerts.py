@@ -102,7 +102,7 @@ def _alert_to_response(alert: Alert) -> AlertResponse:
 # CRUD
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_model=list[AlertResponse])
+@router.get("", response_model=list[AlertResponse])
 async def list_alerts(
     current_user: dict = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
@@ -118,7 +118,7 @@ async def list_alerts(
     return [_alert_to_response(a) for a in alerts]
 
 
-@router.post("/", response_model=AlertResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=AlertResponse, status_code=status.HTTP_201_CREATED)
 async def create_alert(
     body: AlertCreateRequest,
     current_user: dict = Depends(get_current_active_user),

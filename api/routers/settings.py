@@ -113,7 +113,7 @@ def _build_response() -> SettingsResponse:
 # Read / Update
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_model=SettingsResponse)
+@router.get("", response_model=SettingsResponse)
 async def get_settings(
     current_user: dict = Depends(get_current_active_user),
 ):
@@ -121,7 +121,7 @@ async def get_settings(
     return _build_response()
 
 
-@router.put("/", response_model=SettingsResponse)
+@router.put("", response_model=SettingsResponse)
 async def update_settings(
     body: SettingsUpdateRequest,
     current_user: dict = Depends(get_current_active_user),

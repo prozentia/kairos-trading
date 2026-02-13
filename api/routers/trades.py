@@ -26,7 +26,7 @@ router = APIRouter()
 # List / Read
 # ---------------------------------------------------------------------------
 
-@router.get("/", response_model=TradeListResponse)
+@router.get("", response_model=TradeListResponse)
 async def list_trades(
     pair: str | None = Query(None, description="Filter by trading pair"),
     strategy: str | None = Query(None, description="Filter by strategy name"),
