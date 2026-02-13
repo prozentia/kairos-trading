@@ -740,13 +740,19 @@ class PostgresRepository(BaseRepository):
     async def save_daily_stats(self, stats: dict[str, Any]) -> None:
         """Persist daily trading statistics.
 
-        Parameters
-        ----------
-        stats : dict
-            Daily stats data matching the DailyStat model fields.
+        Maps keys from engine/portfolio stats to DailyStat model columns.
         """
+        mapped = {
+            "date": stats.get("date", datetime.now(timezone.utc).date().isoformat()),
+            "pair": stats.get("pair", "ALL"),
+            "total_trades": stats.get("total_trades", 0),
+            "winning_trades": stats.get("wins", stats.get("winning_trades", 0)),
+            "pnl_usdt": stats.get("total_pnl", stats.get("pnl_usdt", 0.0)),
+            "max_drawdown": stats.get("max_drawdown", 0.0),
+            "strategy_name": stats.get("strategy_name", ""),
+        }
         async with self._db.session() as session:
-            stat = DailyStat(**stats)
+            stat = DailyStat(**mapped)
             session.add(stat)
 
     async def create_daily_stat(
