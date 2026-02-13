@@ -305,6 +305,9 @@ class PositionSizer:
         if info.step_size > 0.0:
             steps = math.floor(quantity / info.step_size)
             quantity = steps * info.step_size
+            # Fix floating-point precision (e.g. 0.000060000001 -> 0.00006)
+            precision = max(0, -int(math.floor(math.log10(info.step_size))))
+            quantity = round(quantity, precision)
 
         # Enforce min/max quantity.
         if info.min_qty > 0.0 and quantity < info.min_qty:
