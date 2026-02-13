@@ -1,3 +1,4 @@
+import { restartBot } from "@/api/bot";
 import BotStatusBadge from "@/components/shared/BotStatusBadge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,12 +13,14 @@ import {
   RefreshCw,
   Settings,
 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { toast } from "react-toastify";
 
 const BotControlCard = () => {
   const { status, isLoading, refetch } = useBotStatus();
   const { start, stop, isStarting, isStopping } = useBotControls();
+  const [isRestarting, setIsRestarting] = useState(false);
 
   const handleStart = async () => {
     try {
@@ -36,6 +39,19 @@ const BotControlCard = () => {
       refetch();
     } catch {
       toast.error("Failed to stop bot");
+    }
+  };
+
+  const handleRestart = async () => {
+    setIsRestarting(true);
+    try {
+      await restartBot();
+      toast.success("Bot restarting...");
+      refetch();
+    } catch {
+      toast.error("Failed to restart bot");
+    } finally {
+      setIsRestarting(false);
     }
   };
 
@@ -154,11 +170,15 @@ const BotControlCard = () => {
               )}
               <Button
                 variant="outline"
-                size="icon"
-                onClick={() => refetch()}
-                title="Refresh status"
+                onClick={handleRestart}
+                disabled={isRestarting || !status?.running}
+                title="Restart bot"
               >
-                <RefreshCw className="w-4 h-4" />
+                {isRestarting ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="w-4 h-4" />
+                )}
               </Button>
             </div>
           </div>
