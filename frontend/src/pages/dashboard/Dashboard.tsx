@@ -1,4 +1,5 @@
 import { getPortfolio } from "@/api/portfolio";
+import { useBotStatus } from "@/hooks/useBot";
 import { useTrades, useTradeStats } from "@/hooks/useTrades";
 import type { PortfolioOverview } from "@/types";
 import { useCallback, useEffect, useState } from "react";
@@ -9,7 +10,18 @@ import RecentTradesCard from "./components/RecentTradesCard";
 import StatsCards from "./components/StatsCards";
 import TrustScoreCard from "./components/TrustScoreCard";
 
+// Map trust level name to approximate score for the gauge
+const TRUST_LEVEL_SCORES: Record<string, number> = {
+  CRAWL: 20,
+  WALK: 52,
+  RUN: 72,
+  SPRINT: 90,
+};
+
 const Dashboard = () => {
+  // Bot status (strategy, trust level)
+  const { status: botStatus } = useBotStatus();
+
   // Portfolio data (balance, positions, P&L)
   const [portfolio, setPortfolio] = useState<PortfolioOverview | null>(null);
   const [portfolioLoading, setPortfolioLoading] = useState(true);
@@ -35,28 +47,12 @@ const Dashboard = () => {
 
   useEffect(() => {
     fetchPortfolio();
-    // Refresh portfolio every 30 seconds
     const interval = setInterval(fetchPortfolio, 30000);
     return () => clearInterval(interval);
   }, [fetchPortfolio]);
 
-  // Trust score: in a real app this would come from the backend
-  // For now use a calculated value based on trade stats
-  const trustScore = tradeStats
-    ? Math.min(
-        100,
-        Math.max(
-          0,
-          Math.round(
-            tradeStats.win_rate * 0.4 +
-              (tradeStats.profit_factor > 0
-                ? Math.min(tradeStats.profit_factor * 10, 30)
-                : 0) +
-              Math.min(tradeStats.total_trades * 0.5, 30)
-          )
-        )
-      )
-    : 46;
+  // Trust score from backend trust_level
+  const trustScore = TRUST_LEVEL_SCORES[botStatus?.trust_level ?? "CRAWL"] ?? 20;
 
   return (
     <div className="space-y-6">
@@ -75,7 +71,7 @@ const Dashboard = () => {
         {/* Sidebar: bot control + trust score */}
         <div className="space-y-6">
           <BotControlCard />
-          <TrustScoreCard score={trustScore} isLoading={statsLoading} />
+          <TrustScoreCard score={trustScore} isLoading={false} />
         </div>
       </div>
 

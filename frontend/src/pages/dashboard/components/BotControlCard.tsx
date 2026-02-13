@@ -76,34 +76,49 @@ const BotControlCard = () => {
               )}
             </div>
 
+            {/* Active strategy */}
+            {status?.strategy && (
+              <div className="bg-primary/10 rounded-lg px-3 py-2">
+                <p className="text-[10px] text-muted-foreground uppercase tracking-wide">Strategy</p>
+                <p className="text-sm font-bold text-primary">{status.strategy}</p>
+              </div>
+            )}
+
             {/* Quick stats */}
             <div className="grid grid-cols-2 gap-3">
               <div className="bg-muted/50 rounded-lg p-3">
-                <p className="text-xs text-muted-foreground">Active Pairs</p>
+                <p className="text-xs text-muted-foreground">Pairs</p>
                 <p className="text-lg font-bold text-foreground">
                   {status?.pairs_active?.length ?? 0}
                 </p>
               </div>
               <div className="bg-muted/50 rounded-lg p-3">
-                <p className="text-xs text-muted-foreground">Open Positions</p>
+                <p className="text-xs text-muted-foreground">Positions</p>
                 <p className="text-lg font-bold text-foreground">
                   {status?.open_positions ?? 0}
                 </p>
               </div>
             </div>
 
-            {/* Mode indicator */}
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-muted-foreground">Mode:</span>
-              <span
-                className={`font-semibold ${
-                  status?.mode === "live"
-                    ? "text-green-600 dark:text-green-400"
-                    : "text-amber-600 dark:text-amber-400"
-                }`}
-              >
-                {status?.mode === "live" ? "LIVE" : "DRY RUN"}
-              </span>
+            {/* Mode + daily stats */}
+            <div className="flex items-center justify-between text-sm">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">Mode:</span>
+                <span
+                  className={`font-semibold ${
+                    status?.mode === "live"
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-amber-600 dark:text-amber-400"
+                  }`}
+                >
+                  {status?.mode === "live" ? "LIVE" : "DRY RUN"}
+                </span>
+              </div>
+              {(status?.daily_trades ?? 0) > 0 && (
+                <span className="text-xs text-muted-foreground">
+                  {status?.daily_trades} trades today
+                </span>
+              )}
             </div>
 
             {/* Control buttons */}

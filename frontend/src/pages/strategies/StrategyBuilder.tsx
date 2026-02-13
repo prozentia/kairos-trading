@@ -414,7 +414,7 @@ const StrategyBuilder = () => {
                     value={strategy.risk?.stop_loss_pct ?? 2.0}
                     onChange={(e) =>
                       updateField("risk", {
-                        ...strategy.risk!,
+                        ...(strategy.risk ?? {}),
                         stop_loss_pct: parseFloat(e.target.value),
                       })
                     }
@@ -428,7 +428,7 @@ const StrategyBuilder = () => {
                     value={strategy.risk?.max_position_size_pct ?? 25}
                     onChange={(e) =>
                       updateField("risk", {
-                        ...strategy.risk!,
+                        ...(strategy.risk ?? {}),
                         max_position_size_pct: parseFloat(e.target.value),
                       })
                     }
@@ -442,7 +442,7 @@ const StrategyBuilder = () => {
                     value={strategy.risk?.trailing_activation_pct ?? 1.5}
                     onChange={(e) =>
                       updateField("risk", {
-                        ...strategy.risk!,
+                        ...(strategy.risk ?? {}),
                         trailing_activation_pct: parseFloat(e.target.value),
                       })
                     }
@@ -456,7 +456,7 @@ const StrategyBuilder = () => {
                     value={strategy.risk?.trailing_distance_pct ?? 0.8}
                     onChange={(e) =>
                       updateField("risk", {
-                        ...strategy.risk!,
+                        ...(strategy.risk ?? {}),
                         trailing_distance_pct: parseFloat(e.target.value),
                       })
                     }

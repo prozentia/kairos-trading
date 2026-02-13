@@ -182,16 +182,22 @@ const Sidebar = () => {
           <Settings className="w-5 h-5" />
           <span>Settings</span>
         </Link>
-        <div className="flex items-center gap-3 px-3 py-2">
-          <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
-            <User className="w-4 h-4 text-primary" />
+        <div className="space-y-2 px-3 py-2">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-full bg-primary/20 flex items-center justify-center">
+              <User className="w-4 h-4 text-primary" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium truncate">{user?.username || "User"}</p>
+              <p className="text-xs text-muted-foreground truncate">{user?.email || ""}</p>
+            </div>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium truncate">{user?.username || "User"}</p>
-            <p className="text-xs text-muted-foreground truncate">{user?.email || ""}</p>
-          </div>
-          <button onClick={logout} className="text-muted-foreground hover:text-foreground transition-colors" title="Logout">
+          <button
+            onClick={logout}
+            className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-red-600 dark:text-red-400 hover:bg-red-100 dark:hover:bg-red-600/20 transition-colors"
+          >
             <LogOut className="w-4 h-4" />
+            Logout
           </button>
         </div>
       </div>

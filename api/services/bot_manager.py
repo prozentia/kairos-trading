@@ -94,44 +94,43 @@ class BotManager:
     # Control
     # ------------------------------------------------------------------
 
-    async def start(self) -> dict[str, Any]:
-        """Start the engine.
+    async def _send_control(self, command: str, timeout: float = 10.0) -> dict[str, Any]:
+        """Send a control command to the engine.
 
-        Sends a start command to the engine's control endpoint.
+        The engine exposes POST /control with a JSON body {"command": "..."}.
         """
         try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(f"{self.ENGINE_CONTROL_URL}/start")
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                resp = await client.post(
+                    f"{self.ENGINE_CONTROL_URL}/control",
+                    json={"command": command},
+                )
                 if resp.status_code == 200:
-                    self._start_time = time.monotonic()
-                    return {"success": True, "message": "Bot started"}
+                    return {"success": True, "message": f"Bot {command} command sent"}
                 return {"success": False, "message": f"Engine responded with {resp.status_code}"}
         except Exception as exc:
             return {"success": False, "message": f"Cannot reach engine: {exc}"}
+
+    async def start(self) -> dict[str, Any]:
+        """Start the engine."""
+        result = await self._send_control("start")
+        if result.get("success"):
+            self._start_time = time.monotonic()
+        return result
 
     async def stop(self) -> dict[str, Any]:
         """Stop the engine gracefully."""
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.post(f"{self.ENGINE_CONTROL_URL}/stop")
-                if resp.status_code == 200:
-                    self._start_time = None
-                    return {"success": True, "message": "Bot stopped"}
-                return {"success": False, "message": f"Engine responded with {resp.status_code}"}
-        except Exception as exc:
-            return {"success": False, "message": f"Cannot reach engine: {exc}"}
+        result = await self._send_control("stop")
+        if result.get("success"):
+            self._start_time = None
+        return result
 
     async def restart(self) -> dict[str, Any]:
         """Restart the engine."""
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(f"{self.ENGINE_CONTROL_URL}/restart")
-                if resp.status_code == 200:
-                    self._start_time = time.monotonic()
-                    return {"success": True, "message": "Bot restarted"}
-                return {"success": False, "message": f"Engine responded with {resp.status_code}"}
-        except Exception as exc:
-            return {"success": False, "message": f"Cannot reach engine: {exc}"}
+        result = await self._send_control("restart", timeout=15.0)
+        if result.get("success"):
+            self._start_time = time.monotonic()
+        return result
 
     # ------------------------------------------------------------------
     # Configuration
