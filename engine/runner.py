@@ -827,9 +827,8 @@ class TradingRunner:
             except Exception as exc:
                 logger.error("Failed to set stop-loss for %s: %s", pair, exc)
 
-            # Update balance
-            notional = actual_price * actual_qty
-            self._balance -= notional
+            # Balance is updated by _handle_balance_update via WS.
+            # Do NOT subtract here to avoid double-counting.
 
             # Save to DB
             await self._save_trade_to_db(position, "OPEN")
@@ -978,8 +977,9 @@ class TradingRunner:
         if trade.pnl_usdt < 0:
             self._last_loss_time = candle.timestamp
 
-        # Return capital
-        if not self._config.dry_run:
+        # In live mode, balance is updated by _handle_balance_update via WS.
+        # Only adjust manually in dry_run.
+        if self._config.dry_run:
             notional = exit_price * position.quantity
             self._balance += notional
 
