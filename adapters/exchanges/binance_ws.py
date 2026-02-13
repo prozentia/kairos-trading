@@ -277,6 +277,19 @@ class BinanceWebSocket(BaseExchange):
         streams : list[str]
             List of stream names, e.g. ["btcusdt@kline_1m", "ethusdt@kline_1m"].
         """
+        # Cancel any existing market reader tasks to prevent duplicate recv().
+        surviving: list[asyncio.Task[None]] = []
+        for task in self._tasks:
+            if task.get_name() == "binance_market_reader" and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            else:
+                surviving.append(task)
+        self._tasks = surviving
+
         # Close existing connection if any
         if self._market_ws is not None:
             try:
@@ -309,6 +322,19 @@ class BinanceWebSocket(BaseExchange):
 
     async def _open_user_stream(self) -> None:
         """Open the user-data WebSocket using a listen key."""
+        # Cancel any existing user reader / keepalive tasks.
+        surviving: list[asyncio.Task[None]] = []
+        for task in self._tasks:
+            if task.get_name() in ("binance_user_reader", "binance_keepalive") and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            else:
+                surviving.append(task)
+        self._tasks = surviving
+
         # Close existing
         if self._user_ws is not None:
             try:
