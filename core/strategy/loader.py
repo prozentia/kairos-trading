@@ -61,14 +61,19 @@ class StrategyLoader:
             if key not in registry:
                 errors.append(f"Unknown indicator referenced: {key!r}.")
 
-        # Validate condition tree structure.
+        # Validate condition structure (list or tree format).
         for label, tree in [
             ("entry_conditions", config.entry_conditions),
             ("exit_conditions", config.exit_conditions),
         ]:
             if tree:
-                tree_errors = self._validate_condition_tree(tree, label)
-                errors.extend(tree_errors)
+                if isinstance(tree, list):
+                    for i, node in enumerate(tree):
+                        tree_errors = self._validate_condition_tree(node, f"{label}[{i}]")
+                        errors.extend(tree_errors)
+                elif isinstance(tree, dict):
+                    tree_errors = self._validate_condition_tree(tree, label)
+                    errors.extend(tree_errors)
 
         # Validate risk parameters.
         risk = config.risk
@@ -85,17 +90,24 @@ class StrategyLoader:
     # ------------------------------------------------------------------
 
     def _extract_indicators(self, config: StrategyConfig) -> list[str]:
-        """Walk the condition trees and collect all indicator keys."""
+        """Walk the condition trees/lists and collect all indicator keys."""
         keys: set[str] = set()
         for tree in (config.entry_conditions, config.exit_conditions):
             if tree:
-                self._collect_indicator_keys(tree, keys)
+                # Handle both list format (from frontend) and tree format
+                if isinstance(tree, list):
+                    for item in tree:
+                        self._collect_indicator_keys(item, keys)
+                elif isinstance(tree, dict):
+                    self._collect_indicator_keys(tree, keys)
         return sorted(keys)
 
     def _collect_indicator_keys(
         self, node: dict[str, Any], keys: set[str]
     ) -> None:
-        """Recursively collect indicator keys from a condition tree."""
+        """Recursively collect indicator keys from a condition node/tree."""
+        if not isinstance(node, dict):
+            return
         if "indicator" in node:
             keys.add(node["indicator"])
         for child in node.get("conditions", []):

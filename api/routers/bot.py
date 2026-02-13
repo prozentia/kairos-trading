@@ -27,6 +27,11 @@ class BotStatusResponse(BaseModel):
     last_signal_time: str | None = None
     mode: str = "dry_run"
     version: str = "1.0.0"
+    strategy: str = ""
+    daily_trades: int = 0
+    daily_pnl_usdt: float = 0.0
+    trust_level: str = "CRAWL"
+    circuit_breaker: bool = False
 
 
 class BotConfigResponse(BaseModel):

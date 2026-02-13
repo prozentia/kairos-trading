@@ -177,7 +177,7 @@ class BaseRepository(ABC):
 
     @abstractmethod
     async def get_active_strategy(
-        self, pair: str
+        self, pair: str | None = None
     ) -> dict[str, Any] | None: ...
 
     @abstractmethod

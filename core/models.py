@@ -257,9 +257,9 @@ class StrategyConfig:
     description: str = ""
     pairs: list[str] = field(default_factory=list)
     timeframe: str = "5m"
-    entry_conditions: dict[str, Any] = field(default_factory=dict)
-    exit_conditions: dict[str, Any] = field(default_factory=dict)
-    filters: dict[str, Any] = field(default_factory=dict)
+    entry_conditions: Any = field(default_factory=dict)
+    exit_conditions: Any = field(default_factory=dict)
+    filters: Any = field(default_factory=dict)
     risk: dict[str, Any] = field(default_factory=dict)
     indicators_needed: list[str] = field(default_factory=list)
     is_active: bool = True

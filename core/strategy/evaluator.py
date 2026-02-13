@@ -103,21 +103,30 @@ class StrategyEvaluator:
 
     def _evaluate_group(
         self,
-        group: dict[str, Any],
+        group: dict[str, Any] | list[dict[str, Any]],
         states: dict[str, dict[str, Any]],
         context: dict[str, Any],
     ) -> bool:
         """Recursively evaluate a condition group (AND / OR / NOT).
 
         Args:
-            group: A dict with "logic" and "conditions" keys, or a
-                   single condition dict with "indicator" / "operator".
+            group: A dict with "logic" and "conditions" keys, a single
+                   condition dict with "indicator" / "operator", or a
+                   flat list of conditions (treated as implicit AND).
             states: Current indicator states.
             context: Runtime context.
 
         Returns:
             True if the group evaluates to True.
         """
+        # Flat list of conditions = implicit AND.
+        if isinstance(group, list):
+            if not group:
+                return False
+            return all(
+                self._evaluate_group(c, states, context) for c in group
+            )
+
         # Single condition (leaf node).
         if "indicator" in group:
             return self._evaluate_condition(group, states)

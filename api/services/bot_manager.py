@@ -59,13 +59,18 @@ class BotManager:
                 if resp.status_code == 200:
                     data = resp.json()
                     return {
-                        "running": True,
-                        "uptime_seconds": data.get("uptime_seconds", 0),
-                        "pairs_active": data.get("pairs_active", []),
+                        "running": data.get("status") == "running",
+                        "uptime_seconds": int(data.get("uptime", 0)),
+                        "pairs_active": data.get("pairs", []),
                         "open_positions": data.get("open_positions", 0),
                         "last_signal_time": data.get("last_signal_time"),
                         "mode": data.get("mode", "dry_run"),
                         "version": data.get("version", "1.0.0"),
+                        "strategy": data.get("strategy", ""),
+                        "daily_trades": data.get("daily_trades", 0),
+                        "daily_pnl_usdt": data.get("daily_pnl_usdt", 0.0),
+                        "trust_level": data.get("trust_level", "CRAWL"),
+                        "circuit_breaker": data.get("circuit_breaker", False),
                     }
         except Exception:
             pass
@@ -78,6 +83,11 @@ class BotManager:
             "last_signal_time": None,
             "mode": "dry_run",
             "version": "1.0.0",
+            "strategy": "",
+            "daily_trades": 0,
+            "daily_pnl_usdt": 0.0,
+            "trust_level": "CRAWL",
+            "circuit_breaker": False,
         }
 
     # ------------------------------------------------------------------
