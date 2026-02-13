@@ -231,6 +231,9 @@ class TradingRunner:
             except Exception as exc:
                 logger.warning("Could not fetch Binance balance: %s", exc)
 
+        # Step 3c: Restore open positions from DB
+        await self._restore_open_positions()
+
         # Step 4: Fetch exchange info and warm up indicators
         for pair in self._config.pairs:
             await self._initialize_pair(pair)
@@ -1282,6 +1285,65 @@ class TradingRunner:
     # Persistence
     # ------------------------------------------------------------------
 
+    async def _restore_open_positions(self) -> None:
+        """Restore open positions from the database after a restart.
+
+        Reads all trades with status OPEN and rebuilds the in-memory
+        _open_positions dict so the engine can manage them properly.
+        """
+        if self._repository is None:
+            return
+
+        try:
+            open_trades = await self._repository.get_trades(
+                filters={"status": "OPEN"}
+            )
+            if not open_trades:
+                logger.info("No open positions to restore from DB")
+                return
+
+            for t in open_trades:
+                pair = t.get("pair", "")
+                if not pair or pair in self._open_positions:
+                    continue
+
+                entry_time = t.get("entry_time")
+                if isinstance(entry_time, str):
+                    entry_time = datetime.fromisoformat(entry_time)
+                elif entry_time is None:
+                    entry_time = datetime.now(timezone.utc)
+
+                metadata = t.get("metadata_json") or t.get("metadata") or {}
+                if isinstance(metadata, str):
+                    try:
+                        metadata = json.loads(metadata)
+                    except (json.JSONDecodeError, TypeError):
+                        metadata = {}
+
+                position = Position(
+                    pair=pair,
+                    side=t.get("side", "BUY"),
+                    entry_price=float(t.get("entry_price", 0)),
+                    quantity=float(t.get("quantity", 0)),
+                    entry_time=entry_time,
+                    stop_loss=float(metadata.get("stop_loss", 0)),
+                    entry_reason=t.get("entry_reason", ""),
+                    metadata=metadata if isinstance(metadata, dict) else {},
+                )
+
+                self._open_positions[pair] = position
+                logger.info(
+                    "Restored position: %s qty=%.8f entry=%.2f SL=%.2f",
+                    pair, position.quantity, position.entry_price,
+                    position.stop_loss,
+                )
+
+            logger.info(
+                "Restored %d open position(s) from DB", len(self._open_positions)
+            )
+        except Exception as exc:
+            logger.error("Failed to restore open positions: %s", exc)
+
     async def _save_trade_to_db(
         self,
         position: Position,
@@ -1306,7 +1368,10 @@ class TradingRunner:
                     "strategy_name": position.metadata.get("strategy_name", ""),
                     "entry_reason": position.entry_reason,
                     "status": "OPEN",
-                    "metadata": position.metadata,
+                    "metadata": {
+                        **position.metadata,
+                        "stop_loss": position.stop_loss,
+                    },
                 }
                 await self._repository.save_trade(trade_data)
         except Exception as exc:
