@@ -135,6 +135,10 @@ class TradingRunner:
         self._candle_count: int = 0
         self._strategy_eval_count: int = 0
 
+        # Pairs currently being closed by _close_position (prevents
+        # duplicate saves when the WS fill event arrives during the await).
+        self._pending_close: set[str] = set()
+
         # Circuit breaker state
         self._circuit_breaker_active = False
         self._circuit_breaker_reason = ""
@@ -468,12 +472,25 @@ class TradingRunner:
             return
 
         # Legacy filter check (EMA trend, trading hours, loss cooldown, etc.)
+        # Build legacy filter context (EMA trend value from indicator states).
+        ema_trend_value = 0.0
+        pair_states = self._indicator_states.get(pair, {})
+        ema_state = pair_states.get("ema")
+        if ema_state and ema_state.get("ema"):
+            ema_list = ema_state["ema"]
+            # Find last non-None value.
+            for v in reversed(ema_list):
+                if v is not None:
+                    ema_trend_value = v
+                    break
+
         legacy_context = {
             "price": candle.close,
             "timestamp": candle.timestamp,
             "daily_trade_count": self._daily_trade_count,
             "daily_pnl_pct": self._daily_pnl_pct(),
             "last_loss_time": self._last_loss_time,
+            "ema_trend_value": ema_trend_value,
         }
         passed, reason = self._signal_filter.check_all(self._strategy_config, legacy_context)
         if not passed:
@@ -908,6 +925,9 @@ class TradingRunner:
                 pair, position.quantity, exit_price, reason,
             )
         else:
+            # Mark pair as pending close so _handle_order_update skips it.
+            self._pending_close.add(pair)
+
             # Cancel the exchange stop-loss order first to free locked qty.
             sl_order_id = position.metadata.get("sl_order_id")
             if sl_order_id and self._exchange_rest is not None:
@@ -935,6 +955,7 @@ class TradingRunner:
 
             except Exception as exc:
                 logger.error("Failed to execute SELL for %s: %s", pair, exc)
+                self._pending_close.discard(pair)
                 return
 
         # Update position
@@ -978,6 +999,9 @@ class TradingRunner:
             f"Reason: {reason}"
         )
 
+        # Release pending-close lock.
+        self._pending_close.discard(pair)
+
         logger.info(
             "Position closed: %s, PnL=%.2f USDT (%.2f%%)",
             pair, trade.pnl_usdt, trade.pnl_pct,
@@ -1006,6 +1030,11 @@ class TradingRunner:
         )
 
         if order_status == "FILLED" and pair in self._open_positions:
+            # Skip if _close_position is already handling this pair.
+            if pair in self._pending_close:
+                logger.debug("Skipping duplicate fill for %s (pending_close)", pair)
+                return
+
             position = self._open_positions[pair]
 
             # If this is a SELL fill (stop-loss or manual), close the position
