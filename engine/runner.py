@@ -217,6 +217,16 @@ class TradingRunner:
             except Exception as exc:
                 logger.warning("Redis connection failed (non-fatal): %s", exc)
 
+        # Step 3b: Fetch real USDT balance from Binance
+        if self._exchange_rest is not None and not self._config.dry_run:
+            try:
+                real_balance = await self._exchange_rest.get_balance("USDT")
+                if real_balance > 0:
+                    self._balance = real_balance
+                    logger.info("Binance USDT balance loaded: %.2f", real_balance)
+            except Exception as exc:
+                logger.warning("Could not fetch Binance balance: %s", exc)
+
         # Step 4: Fetch exchange info and warm up indicators
         for pair in self._config.pairs:
             await self._initialize_pair(pair)
@@ -1340,6 +1350,18 @@ class TradingRunner:
 
     def get_status(self) -> dict[str, Any]:
         """Return a summary dict for the health endpoint."""
+        positions_detail = []
+        for pair, pos in self._open_positions.items():
+            positions_detail.append({
+                "pair": pos.pair,
+                "side": pos.side,
+                "entry_price": pos.entry_price,
+                "quantity": pos.quantity,
+                "entry_time": pos.entry_time.isoformat() if pos.entry_time else None,
+                "stop_loss": pos.stop_loss,
+                "pnl_pct": round(pos.current_pnl_pct, 2),
+                "strategy_name": pos.metadata.get("strategy_name", ""),
+            })
         return {
             "status": "running" if self._running else "stopped",
             "uptime": round(self.uptime, 1),
@@ -1348,7 +1370,10 @@ class TradingRunner:
             "mode": self.mode,
             "daily_trades": self._daily_trade_count,
             "daily_pnl_usdt": round(self._daily_pnl_usdt, 2),
+            "daily_pnl_pct": round(self._daily_pnl_pct(), 2),
+            "balance": round(self._balance, 2),
             "trust_level": self._get_trust_level(),
             "circuit_breaker": self._circuit_breaker_active,
             "strategy": self._strategy_config.name if self._strategy_config else "",
+            "positions": positions_detail,
         }

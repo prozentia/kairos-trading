@@ -9,25 +9,64 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.auth.jwt import get_current_active_user
 from api.deps import get_db
+from api.services.bot_manager import BotManager
 from adapters.database.models import Trade
 
 router = APIRouter()
+_bot_manager = BotManager()
 
 
 # ---------------------------------------------------------------------------
-# Positions
+# Portfolio Overview (main endpoint for dashboard)
 # ---------------------------------------------------------------------------
 
 @router.get("")
+async def get_portfolio_overview(
+    current_user: dict = Depends(get_current_active_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Return portfolio overview for the dashboard.
+
+    Combines live engine data (balance, P&L) with DB positions.
+    Returns PortfolioOverview shape expected by the frontend.
+    """
+    # Get live data from engine
+    engine_status = await _bot_manager.get_status()
+    balance = engine_status.get("balance", 0.0)
+    daily_pnl_usdt = engine_status.get("daily_pnl_usdt", 0.0)
+    daily_pnl_pct = engine_status.get("daily_pnl_pct", 0.0)
+    engine_positions = engine_status.get("positions", [])
+
+    # Compute exposure from engine positions
+    in_positions_usdt = sum(
+        p.get("entry_price", 0) * p.get("quantity", 0)
+        for p in engine_positions
+    )
+
+    total_value = balance + in_positions_usdt
+    exposure_pct = (in_positions_usdt / total_value * 100) if total_value > 0 else 0.0
+
+    return {
+        "total_value_usdt": round(total_value, 2),
+        "available_usdt": round(balance, 2),
+        "in_positions_usdt": round(in_positions_usdt, 2),
+        "exposure_pct": round(exposure_pct, 2),
+        "daily_pnl_usdt": round(daily_pnl_usdt, 2),
+        "daily_pnl_pct": round(daily_pnl_pct, 2),
+        "positions": engine_positions,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Positions (DB-backed, for history)
+# ---------------------------------------------------------------------------
+
+@router.get("/positions")
 async def get_positions(
     current_user: dict = Depends(get_current_active_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """Get all current open positions.
-
-    Returns a list of {pair, side, entry_price, quantity, current_price,
-    unrealised_pnl, unrealised_pnl_pct, status}.
-    """
+    """Get all open positions from DB."""
     result = await db.execute(
         select(Trade).where(Trade.status == "OPEN").order_by(Trade.entry_time.desc())
     )

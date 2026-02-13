@@ -69,8 +69,11 @@ class BotManager:
                         "strategy": data.get("strategy", ""),
                         "daily_trades": data.get("daily_trades", 0),
                         "daily_pnl_usdt": data.get("daily_pnl_usdt", 0.0),
+                        "daily_pnl_pct": data.get("daily_pnl_pct", 0.0),
+                        "balance": data.get("balance", 0.0),
                         "trust_level": data.get("trust_level", "CRAWL"),
                         "circuit_breaker": data.get("circuit_breaker", False),
+                        "positions": data.get("positions", []),
                     }
         except Exception:
             pass
@@ -86,8 +89,11 @@ class BotManager:
             "strategy": "",
             "daily_trades": 0,
             "daily_pnl_usdt": 0.0,
+            "daily_pnl_pct": 0.0,
+            "balance": 0.0,
             "trust_level": "CRAWL",
             "circuit_breaker": False,
+            "positions": [],
         }
 
     # ------------------------------------------------------------------
