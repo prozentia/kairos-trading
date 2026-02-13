@@ -1386,7 +1386,8 @@ class TradingRunner:
             return
 
         try:
-            today_start = datetime.now(timezone.utc).replace(
+            # DB stores naive timestamps (UTC), so use naive datetime.
+            today_start = datetime.utcnow().replace(
                 hour=0, minute=0, second=0, microsecond=0
             )
             closed_today = await self._repository.get_trades(
