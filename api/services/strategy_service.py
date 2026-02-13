@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from adapters.database.models import Strategy, Backtest
@@ -29,10 +29,16 @@ class StrategyService:
     # ------------------------------------------------------------------
 
     async def list_strategies(self, user_id: str | None = None) -> list[Strategy]:
-        """Return all strategies, optionally filtered by creator."""
+        """Return all strategies visible to the user.
+
+        Includes the user's own strategies AND template strategies
+        (created_by IS NULL) seeded by the platform.
+        """
         q = select(Strategy).order_by(Strategy.created_at.desc())
         if user_id:
-            q = q.where(Strategy.created_by == user_id)
+            q = q.where(
+                or_(Strategy.created_by == user_id, Strategy.created_by.is_(None))
+            )
         result = await self._db.execute(q)
         return list(result.scalars().all())
 
