@@ -13,6 +13,7 @@ import asyncio
 import hashlib
 import hmac
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any, Callable, Awaitable
@@ -24,6 +25,14 @@ from adapters.exchanges.base import BaseExchange
 from core.models import Candle
 
 logger = logging.getLogger(__name__)
+
+
+def _round_price(price: float, tick_size: float) -> float:
+    """Round price down to the nearest tick_size multiple (Binance PRICE_FILTER)."""
+    if tick_size <= 0:
+        return price
+    return math.floor(price / tick_size) * tick_size
+
 
 # Binance REST API base URLs
 BINANCE_REST_BASE = "https://api.binance.com"
@@ -562,6 +571,7 @@ class BinanceREST(BaseExchange):
         pair: str,
         quantity: float,
         stop_price: float,
+        tick_size: float = 0.01,
     ) -> dict[str, Any]:
         """Place a STOP_LOSS_LIMIT order.
 
@@ -576,21 +586,25 @@ class BinanceREST(BaseExchange):
             Quantity to sell.
         stop_price : float
             Trigger price for the stop.
+        tick_size : float
+            PRICE_FILTER tick_size from exchange info (default 0.01).
 
         Returns
         -------
         dict
             Binance order response.
         """
-        limit_price = stop_price * 0.999
+        # Round prices to tick_size to satisfy Binance PRICE_FILTER.
+        stop_price = _round_price(stop_price, tick_size)
+        limit_price = _round_price(stop_price * 0.999, tick_size)
         params = {
             "symbol": pair,
             "side": "SELL",
             "type": "STOP_LOSS_LIMIT",
             "timeInForce": "GTC",
             "quantity": f"{quantity}",
-            "stopPrice": f"{stop_price}",
-            "price": f"{limit_price}",
+            "stopPrice": f"{stop_price:.8f}".rstrip("0").rstrip("."),
+            "price": f"{limit_price:.8f}".rstrip("0").rstrip("."),
         }
         data = await self._request(
             "POST", "/api/v3/order", params=params, signed=True

@@ -363,6 +363,15 @@ class PostgresRepository(BaseRepository):
         """
         async with self._db.session() as session:
             data = dict(trade_data)
+            # Ensure datetime fields are naive (no tzinfo) for TIMESTAMP columns.
+            for dt_field in ("entry_time", "exit_time"):
+                val = data.get(dt_field)
+                if isinstance(val, str):
+                    val = datetime.fromisoformat(val)
+                if isinstance(val, datetime) and val.tzinfo is not None:
+                    val = val.replace(tzinfo=None)
+                if val is not None:
+                    data[dt_field] = val
             # Handle metadata serialization
             if "metadata" in data:
                 data["metadata_json"] = json.dumps(data.pop("metadata"))

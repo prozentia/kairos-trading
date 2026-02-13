@@ -31,6 +31,7 @@ class SymbolInfo:
     max_qty: float = float("inf")
     step_size: float = 0.0
     min_notional: float = 0.0
+    tick_size: float = 0.01
 
 
 class PositionSizer:

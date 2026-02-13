@@ -787,10 +787,12 @@ class TradingRunner:
 
             # Place stop-loss order on exchange
             try:
+                tick_size = symbol_info.tick_size if symbol_info else 0.01
                 await self._exchange_rest.set_stop_loss(
                     pair=pair,
                     quantity=actual_qty,
                     stop_price=stop_loss_price,
+                    tick_size=tick_size,
                 )
                 logger.info("Stop-loss set for %s at %.2f", pair, stop_loss_price)
             except Exception as exc:
@@ -1158,6 +1160,7 @@ class TradingRunner:
                     max_qty=info.get("max_qty", float("inf")),
                     step_size=info.get("step_size", 0.0),
                     min_notional=info.get("min_notional", 0.0),
+                    tick_size=info.get("tick_size", 0.01),
                 )
                 logger.info("Exchange info loaded for %s", pair)
             except Exception as exc:
