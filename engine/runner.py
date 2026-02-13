@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import time
 from datetime import datetime, timezone
 from typing import Any
@@ -935,12 +936,33 @@ class TradingRunner:
             if sl_order_id and self._exchange_rest is not None:
                 await self._exchange_rest.cancel_order(pair, sl_order_id)
 
-            # Live mode: place market sell order
+            # Live mode: place market sell order.
+            # Use actual Binance balance (fees may have reduced qty).
+            sell_qty = position.quantity
+            try:
+                base_asset = pair.replace("USDT", "")
+                real_balance = await self._exchange_rest.get_balance(base_asset)
+                if 0 < real_balance < sell_qty:
+                    logger.info(
+                        "Adjusting sell qty for %s: %.8f -> %.8f (fee-adjusted)",
+                        pair, sell_qty, real_balance,
+                    )
+                    sell_qty = real_balance
+                # Clamp to symbol step_size
+                sym = self._symbol_info.get(pair)
+                if sym and sym.step_size > 0:
+                    steps = math.floor(sell_qty / sym.step_size)
+                    sell_qty = steps * sym.step_size
+                    precision = max(0, -int(math.floor(math.log10(sym.step_size))))
+                    sell_qty = round(sell_qty, precision)
+            except Exception as exc:
+                logger.warning("Could not fetch real balance for %s: %s", pair, exc)
+
             try:
                 order_result = await self._exchange_rest.place_order(
                     pair=pair,
                     side="SELL",
-                    quantity=position.quantity,
+                    quantity=sell_qty,
                     order_type="MARKET",
                 )
                 logger.info(
@@ -1096,8 +1118,15 @@ class TradingRunner:
         wins = sum(1 for t in self._daily_trades if t.pnl_usdt > 0)
         win_rate = (wins / total) * 100.0 if total > 0 else 0.0
 
+        # Need minimum 5 trades to move beyond WALK
+        if total < 5:
+            # Cap at WALK level (max score 64) with few trades
+            max_score = 64.0
+        else:
+            max_score = 100.0
+
         # Simple trust score: base on win rate + trade count bonus
-        score = win_rate * 0.8  # 80% weight on win rate
+        score = win_rate * 0.6  # 60% weight on win rate
         score += min(total * 2, 20)  # Up to 20 points for trade count
 
         # Penalty for consecutive losses
@@ -1109,7 +1138,7 @@ class TradingRunner:
                 break
         score -= consecutive_losses * 10
 
-        score = max(0.0, min(100.0, score))
+        score = max(0.0, min(max_score, score))
 
         for name, (low, high, _frac) in TRUST_LEVELS.items():
             if low <= score < high:
