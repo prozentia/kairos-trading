@@ -1176,6 +1176,11 @@ class TradingRunner:
                         raw_def = json.loads(raw_def)
                     self._strategy_config = self._strategy_loader.load_from_dict(raw_def)
                     logger.info("Strategy loaded from DB: %s", self._strategy_config.name)
+                    # Override engine pairs with strategy pairs if defined
+                    strategy_pairs = raw_def.get("pairs")
+                    if strategy_pairs and isinstance(strategy_pairs, list):
+                        self._config.pairs = strategy_pairs
+                        logger.info("Pairs overridden by strategy: %s", strategy_pairs)
                     self._setup_timeframe_aggregator()
                     return
             except Exception as exc:
