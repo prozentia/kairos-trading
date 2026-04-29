@@ -1,0 +1,19 @@
+# Override pour Caddy (pas Traefik)
+# Usage: docker compose -f docker-compose.prod.yml -f docker-compose.caddy.yml up -d
+
+services:
+  frontend:
+    ports:
+      - "3002:80"
+    networks:
+      - kairos-net
+
+  api:
+    ports:
+      - "8002:8000"
+    networks:
+      - kairos-net
+
+networks:
+  kairos-net:
+    driver: bridge

@@ -755,3 +755,89 @@ class BinanceREST(BaseExchange):
     ) -> None:
         """Not applicable for REST adapter -- use BinanceWebSocket."""
         raise NotImplementedError("Use BinanceWebSocket for stream subscriptions")
+
+    # ------------------------------------------------------------------
+    # Futures market data (open interest, funding rate, mark price)
+    # ------------------------------------------------------------------
+
+    async def get_open_interest(self, symbol: str) -> float:
+        """Fetch current open interest for a symbol.
+
+        Uses Binance Futures endpoint GET /fapi/v1/openInterest.
+        Falls back to 0.0 if the endpoint is unavailable (spot-only account).
+
+        Parameters
+        ----------
+        symbol : str
+            Trading pair, e.g. "BTCUSDT".
+
+        Returns
+        -------
+        float
+            Open interest in contracts.
+        """
+        try:
+            data = await self._request(
+                "GET", "/fapi/v1/openInterest", params={"symbol": symbol}
+            )
+            return float(data.get("openInterest", 0.0))
+        except Exception as exc:
+            logger.warning("Failed to fetch open interest for %s: %s", symbol, exc)
+            return 0.0
+
+    async def get_funding_rate(self, symbol: str) -> float:
+        """Fetch the latest funding rate for a symbol.
+
+        Uses Binance Futures endpoint GET /fapi/v1/fundingRate.
+        Returns the most recent funding rate value.
+
+        Parameters
+        ----------
+        symbol : str
+            Trading pair, e.g. "BTCUSDT".
+
+        Returns
+        -------
+        float
+            Funding rate (e.g. 0.0001 = 0.01%).
+        """
+        try:
+            data = await self._request(
+                "GET", "/fapi/v1/fundingRate",
+                params={"symbol": symbol, "limit": 1},
+            )
+            if isinstance(data, list) and data:
+                return float(data[0].get("fundingRate", 0.0))
+            return 0.0
+        except Exception as exc:
+            logger.warning("Failed to fetch funding rate for %s: %s", symbol, exc)
+            return 0.0
+
+    async def get_mark_price(self, symbol: str) -> dict[str, Any]:
+        """Fetch mark price and index price for a symbol.
+
+        Uses Binance Futures endpoint GET /fapi/v1/premiumIndex.
+
+        Parameters
+        ----------
+        symbol : str
+            Trading pair, e.g. "BTCUSDT".
+
+        Returns
+        -------
+        dict
+            Contains markPrice, indexPrice, lastFundingRate.
+        """
+        try:
+            data = await self._request(
+                "GET", "/fapi/v1/premiumIndex", params={"symbol": symbol}
+            )
+            return {
+                "symbol": symbol,
+                "mark_price": float(data.get("markPrice", 0.0)),
+                "index_price": float(data.get("indexPrice", 0.0)),
+                "last_funding_rate": float(data.get("lastFundingRate", 0.0)),
+            }
+        except Exception as exc:
+            logger.warning("Failed to fetch mark price for %s: %s", symbol, exc)
+            return {"symbol": symbol, "mark_price": 0.0, "index_price": 0.0, "last_funding_rate": 0.0}

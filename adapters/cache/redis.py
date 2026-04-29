@@ -417,3 +417,60 @@ class RedisCache:
             Bot status data or None if not cached.
         """
         return await self.get_json("bot:status")
+
+    # ------------------------------------------------------------------
+    # Trading pipeline channels
+    # ------------------------------------------------------------------
+
+    CHANNEL_SNAPSHOT = "kairos:snapshot"
+    CHANNEL_SIGNAL = "kairos:agent_signal"
+    CHANNEL_PROPOSAL = "kairos:proposal"
+    CHANNEL_GATE_RESULT = "kairos:gate_result"
+    CHANNEL_EXECUTION = "kairos:execution"
+    CHANNEL_TRADE = "kairos:trades"
+    CHANNEL_ALERT = "kairos:alerts"
+    CHANNEL_SYSTEM = "kairos:system"
+
+    KEY_BOT_STATE = "kairos:bot_state"
+    KEY_SESSION_DATE = "kairos:session_date"
+
+    async def publish_event(self, channel: str, data: dict[str, Any]) -> None:
+        """Publish a JSON event to a channel."""
+        await self.publish(channel, json.dumps(data, default=str))
+
+    async def subscribe_channel(
+        self,
+        channel: str,
+        callback: Callable[[str], Awaitable[None]],
+    ) -> None:
+        """Subscribe to a trading pipeline channel."""
+        await self.subscribe(channel, callback)
+
+    async def publish_trade_event(self, trade_data: dict[str, Any]) -> None:
+        """Publish a trade event (opened or closed)."""
+        await self.publish_event(self.CHANNEL_TRADE, trade_data)
+
+    async def publish_alert(self, alert_data: dict[str, Any]) -> None:
+        """Publish an alert event."""
+        await self.publish_event(self.CHANNEL_ALERT, alert_data)
+
+    async def publish_system_event(self, event_type: str, data: dict[str, Any]) -> None:
+        """Publish a system event (bot state change, error, etc)."""
+        payload = {"event_type": event_type, **data}
+        await self.publish_event(self.CHANNEL_SYSTEM, payload)
+
+    async def set_bot_state(self, state: dict[str, Any]) -> None:
+        """Cache the current bot state with 24h TTL."""
+        await self.set_json(self.KEY_BOT_STATE, state, ttl=86400)
+
+    async def get_bot_state(self) -> dict[str, Any] | None:
+        """Get the cached bot state."""
+        return await self.get_json(self.KEY_BOT_STATE)
+
+    async def set_session_date(self, date: str) -> None:
+        """Set the current session date."""
+        await self.set(self.KEY_SESSION_DATE, date, ttl=86400)
+
+    async def get_session_date(self) -> str | None:
+        """Get the current session date."""
+        return await self.get(self.KEY_SESSION_DATE)

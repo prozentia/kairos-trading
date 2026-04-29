@@ -14,6 +14,13 @@ from enum import Enum
 from typing import Any
 
 
+class BotState(Enum):
+    """Bot operational state."""
+    ACTIVE = "ACTIVE"
+    SAFE_MODE = "SAFE_MODE"
+    HALTED = "HALTED"
+
+
 class SignalType(Enum):
     """Type of trading signal emitted by a strategy."""
     BUY = "BUY"
@@ -271,3 +278,114 @@ class StrategyConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> StrategyConfig:
         return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
+
+@dataclass
+class MarketSnapshot:
+    """A point-in-time view of market state for a symbol."""
+
+    timestamp: int
+    symbol: str
+    last_price: float
+    bid: float
+    ask: float
+    spread_bps: float
+    volume_1m: float
+    volume_ratio_vs_avg: float
+    candles: dict[str, list[Candle]] = field(default_factory=dict)
+    open_interest: float = 0.0
+    funding_rate: float = 0.0
+    macro_risk_score: float = 0.0
+    bot_state: BotState = BotState.ACTIVE
+    indicator_states: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["bot_state"] = self.bot_state.value
+        return data
+
+
+@dataclass
+class AgentSignal:
+    """Signal produced by an AI analyst agent."""
+
+    agent: str  # "technical" | "momentum" | "context" | "risk"
+    timestamp: int
+    signal_score: float  # 0.0 – 1.0
+    data: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class TradeProposal:
+    """A proposal to open a trade, pending risk gate validation."""
+
+    proposal_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    timestamp: int = 0
+    symbol: str = ""
+    action: str = "NO_TRADE"  # "BUY" | "NO_TRADE"
+    confidence: float = 0.0
+    entry_price_ref: float = 0.0
+    stop_loss: float = 0.0
+    take_profit: float = 0.0
+    reward_risk_ratio: float = 0.0
+    setup_type: str = ""
+    reason: list[str] = field(default_factory=list)
+    agent_scores: dict[str, float] = field(default_factory=dict)
+    status: str = "PENDING_RISK_GATE"  # "PENDING_RISK_GATE" | "APPROVED" | "REJECTED"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RiskGateResult:
+    """Result of a risk gate evaluation on a trade proposal."""
+
+    proposal_id: str = ""
+    gate_decision: str = "APPROVED"  # "APPROVED" | "REJECTED"
+    checks: dict[str, dict[str, Any]] = field(default_factory=dict)
+    rejection_reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class RiskConfig:
+    """Risk management parameters for the risk gate."""
+
+    max_spread_bps: float = 2.0
+    max_slippage_bps: float = 3.0
+    min_confidence: float = 0.60
+    min_reward_risk: float = 2.0
+    max_daily_loss_pct: float = 2.0
+    max_trades_per_day: int = 10
+    max_concurrent_positions: int = 1
+    max_exposure_pct: float = 1.0
+    max_atr_zscore: float = 3.0
+    max_macro_risk_score: float = 0.70
+    risk_per_trade_pct: float = 0.82
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class SessionState:
+    """Tracks the current trading session state."""
+
+    date: str = ""
+    trades_today: int = 0
+    pnl_today_pct: float = 0.0
+    open_positions: int = 0
+    open_positions_by_pair: dict[str, int] = field(default_factory=dict)
+    exposure_by_pair: dict[str, float] = field(default_factory=dict)
+    total_exposure_pct: float = 0.0
+    max_drawdown_today_pct: float = 0.0
+    circuit_breaker_active: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
