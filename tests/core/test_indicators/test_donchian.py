@@ -97,17 +97,21 @@ def test_donchian_update_incremental(donchian_indicator, sample_candles):
 
 
 def test_donchian_evaluate_breakout_up(donchian_indicator, sample_candles):
-    """breakout_up should be True when close >= upper."""
+    """breakout_up should be True when close > upper of the previous candles."""
     state = donchian_indicator.calculate(sample_candles)
-    state["current_close"] = state["upper"][-1]
+    state["current_close"] = state["upper"][-2] + 0.01
     assert donchian_indicator.evaluate(state, "breakout_up") is True
+    state["current_close"] = state["upper"][-2]
+    assert donchian_indicator.evaluate(state, "breakout_up") is False
 
 
 def test_donchian_evaluate_breakout_down(donchian_indicator, sample_candles):
-    """breakout_down should be True when close <= lower."""
+    """breakout_down should be True when close < lower of the previous candles."""
     state = donchian_indicator.calculate(sample_candles)
-    state["current_close"] = state["lower"][-1]
+    state["current_close"] = state["lower"][-2] - 0.01
     assert donchian_indicator.evaluate(state, "breakout_down") is True
+    state["current_close"] = state["lower"][-2]
+    assert donchian_indicator.evaluate(state, "breakout_down") is False
 
 
 def test_donchian_evaluate_inside(donchian_indicator, sample_candles):

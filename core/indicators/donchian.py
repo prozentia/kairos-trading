@@ -5,7 +5,7 @@ The middle line is the average of the upper and lower bands.  Used in
 breakout strategies (e.g. Turtle Trading) and as a volatility measure.
 
 Operators supported:
-    breakout_up    - price closed above the upper band
+    breakout_up    - price closed above the upper band of the previous candles
     breakout_down  - price closed below the lower band
     inside         - price is between the bands
     squeeze        - channel width is narrowing (low volatility)
@@ -120,10 +120,17 @@ class DonchianChannel(BaseIndicator):
         if latest_upper is None or latest_lower is None:
             return False
 
-        if operator == "breakout_up":
-            return current_close >= latest_upper
-        elif operator == "breakout_down":
-            return current_close <= latest_lower
+        if operator in ("breakout_up", "breakout_down"):
+            # The latest band includes the current candle, so its close can
+            # never exceed it: compare with the channel of the previous
+            # candles (classic Donchian / turtle breakout).
+            prev_upper = _prev_valid(upper_list)
+            prev_lower = _prev_valid(lower_list)
+            if prev_upper is None or prev_lower is None:
+                return False
+            if operator == "breakout_up":
+                return current_close > prev_upper
+            return current_close < prev_lower
         elif operator == "inside":
             return latest_lower < current_close < latest_upper
         elif operator == "squeeze":
