@@ -11,11 +11,12 @@ core pure-Python modules -- never on concrete adapter implementations.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import json
 import logging
 import math
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from engine.config import EngineConfig
@@ -31,7 +32,11 @@ from core.models import (
 )
 from core.indicators.registry import IndicatorRegistry, get_registry
 from core.strategy.evaluator import StrategyEvaluator
-from core.strategy.loader import StrategyLoader
+from core.strategy.loader import (
+    StrategyLoader,
+    state_key as loader_state_key,
+    trend_filter_specs,
+)
 from core.strategy.filters import SignalFilter
 from core.risk.position import PositionManager
 from core.risk.sizing import PositionSizer, SymbolInfo, TRUST_LEVELS
@@ -46,6 +51,20 @@ DAILY_STATS_SAVE_INTERVAL = 300  # 5 minutes
 
 # How often to cache engine state to Redis (seconds).
 STATE_CACHE_INTERVAL = 10
+
+
+def _as_utc(value: datetime) -> datetime:
+    """Timezone-aware UTC datetime (naive values are assumed to be UTC)."""
+    if value.tzinfo is None:
+        return value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
+def _naive(value: datetime | None) -> datetime | None:
+    """Drop tzinfo: DB timestamp columns are naive (UTC)."""
+    if value is not None and value.tzinfo is not None:
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+    return value
 
 
 class TradingRunner:
@@ -117,7 +136,9 @@ class TradingRunner:
         self._running = False
         self._start_time: float = 0.0
         self._open_positions: dict[str, Position] = {}  # pair -> Position
-        self._indicator_states: dict[str, dict[str, Any]] = {}  # pair -> {indicator_key: state}
+        self._indicator_states: dict[str, dict[str, Any]] = {}  # pair -> {state_key: state}
+        # (strategy_config, specs) -- see _get_indicator_specs()
+        self._indicator_specs_cache: tuple[Any, dict[str, tuple[str, dict[str, Any]]]] | None = None
         self._daily_trades: list[Trade] = []
         self._daily_trade_count: int = 0
         self._daily_pnl_usdt: float = 0.0
@@ -144,6 +165,11 @@ class TradingRunner:
         self._circuit_breaker_active = False
         self._circuit_breaker_reason = ""
         self._circuit_breaker_until: datetime | None = None
+        # UTC day of the daily counters (None until the first closed candle).
+        self._stats_day: Any = None
+        # Losses before this index of _daily_trades were already "paid" by a
+        # circuit-breaker pause and must not re-trip it.
+        self._cb_trades_offset: int = 0
 
     # ------------------------------------------------------------------
     # Properties for external monitoring (health endpoint)
@@ -353,6 +379,7 @@ class TradingRunner:
             return
 
         self._candle_count += 1
+        await self._roll_daily_stats(candle.timestamp)
         # Periodic INFO log every 10 closed candles for monitoring.
         if self._candle_count % 10 == 0:
             logger.info(
@@ -429,14 +456,20 @@ class TradingRunner:
             return
 
         # Check circuit breakers first
+        # Market time (candle) drives the breaker: same as wall clock in live,
+        # and correct when candles are replayed.
+        now = _as_utc(candle.timestamp)
         if self._circuit_breaker_active:
-            if self._circuit_breaker_until and datetime.now(timezone.utc) < self._circuit_breaker_until:
+            if self._circuit_breaker_until and now < self._circuit_breaker_until:
                 logger.debug("Circuit breaker active: %s", self._circuit_breaker_reason)
                 return
             else:
                 self._circuit_breaker_active = False
                 self._circuit_breaker_reason = ""
                 self._circuit_breaker_until = None
+                # Start a fresh losing streak after the pause, otherwise the
+                # same 3 losses re-trip the breaker forever.
+                self._cb_trades_offset = len(self._daily_trades)
                 logger.info("Circuit breaker cleared")
 
         self._strategy_eval_count += 1
@@ -467,42 +500,42 @@ class TradingRunner:
             signal.type.value, pair, signal.price, signal.reason,
         )
 
-        # Step 4: Apply post-signal filters
-        candles_for_filter = self._candle_buffer.get_last(
-            100, pair=pair, timeframe=self._config.strategy_timeframe
-        )
-        filter_config = self._strategy_config.filters or {}
-        signal = self._signal_filter.apply_filters(signal, candles_for_filter, filter_config)
+        # Step 4: Apply post-signal filters -- entries only. Filters (trend,
+        # EMA, cooldown...) must never block an exit: a SELL closes an open
+        # long position and has to go through.
+        if signal.type == SignalType.BUY:
+            candles_for_filter = self._candle_buffer.get_last(
+                100, pair=pair, timeframe=self._effective_strategy_tf
+            )
+            filter_config = self._strategy_config.filters or {}
+            signal = self._signal_filter.apply_filters(signal, candles_for_filter, filter_config)
 
-        if not signal.is_actionable:
-            logger.info("Signal filtered out: %s", signal.reason)
-            return
+            if not signal.is_actionable:
+                logger.info("Signal filtered out: %s", signal.reason)
+                return
 
-        # Legacy filter check (EMA trend, trading hours, loss cooldown, etc.)
-        # Build legacy filter context (EMA trend value from indicator states).
-        ema_trend_value = 0.0
-        pair_states = self._indicator_states.get(pair, {})
-        ema_state = pair_states.get("ema")
-        if ema_state and ema_state.get("ema"):
-            ema_list = ema_state["ema"]
-            # Find last non-None value.
-            for v in reversed(ema_list):
-                if v is not None:
-                    ema_trend_value = v
-                    break
+            # Legacy filter check (EMA trend, ADX trend, trading hours, loss
+            # cooldown, etc.) using the indicator states computed with the
+            # filter's own period.
+            trend = trend_filter_specs(self._strategy_config.filters)
+            ema_key = loader_state_key(*trend.get("ema_trend", ("ema", None)))
+            adx_key = loader_state_key(*trend.get("adx_trend", ("adx_dmi", None)))
+            ema_trend_value = self._latest_indicator_value(pair, ema_key, "ema") or 0.0
+            adx_value = self._latest_indicator_value(pair, adx_key, "adx")
 
-        legacy_context = {
-            "price": candle.close,
-            "timestamp": candle.timestamp,
-            "daily_trade_count": self._daily_trade_count,
-            "daily_pnl_pct": self._daily_pnl_pct(),
-            "last_loss_time": self._last_loss_time,
-            "ema_trend_value": ema_trend_value,
-        }
-        passed, reason = self._signal_filter.check_all(self._strategy_config, legacy_context)
-        if not passed:
-            logger.info("Signal rejected by legacy filter: %s", reason)
-            return
+            legacy_context = {
+                "price": candle.close,
+                "timestamp": candle.timestamp,
+                "daily_trade_count": self._daily_trade_count,
+                "daily_pnl_pct": self._daily_pnl_pct(),
+                "last_loss_time": self._last_loss_time,
+                "ema_trend_value": ema_trend_value,
+                "adx_value": adx_value,
+            }
+            passed, reason = self._signal_filter.check_all(self._strategy_config, legacy_context)
+            if not passed:
+                logger.info("Signal rejected by legacy filter: %s", reason)
+                return
 
         # Step 5: Check portfolio constraints
         if signal.type == SignalType.BUY:
@@ -519,7 +552,7 @@ class TradingRunner:
 
             # Check circuit breakers
             cb_ok, cb_reason = self._portfolio_manager.check_circuit_breakers(
-                self._daily_trades,
+                self._daily_trades[self._cb_trades_offset:],
                 self._daily_pnl_pct(),
                 self._balance,
             )
@@ -529,11 +562,9 @@ class TradingRunner:
                 self._circuit_breaker_reason = cb_reason
                 # Pause 30 min for consecutive losses, 24h for large loss
                 if "consecutive" in cb_reason.lower():
-                    from datetime import timedelta
-                    self._circuit_breaker_until = datetime.now(timezone.utc) + timedelta(minutes=30)
+                    self._circuit_breaker_until = now + timedelta(minutes=30)
                 else:
-                    from datetime import timedelta
-                    self._circuit_breaker_until = datetime.now(timezone.utc) + timedelta(hours=24)
+                    self._circuit_breaker_until = now + timedelta(hours=24)
                 return
 
         # Step 6: Execute signal
@@ -565,38 +596,68 @@ class TradingRunner:
 
         pair_states = self._indicator_states[pair]
 
-        for ind_key in self._strategy_config.indicators_needed:
+        # One state per (indicator, params) used by the strategy, so the
+        # params written in conditions/filters are honoured.
+        for state_key, (ind_key, params) in self._get_indicator_specs().items():
             try:
                 indicator = self._indicator_registry.get(ind_key)
             except KeyError:
                 logger.warning("Indicator %r not registered, skipping", ind_key)
                 continue
 
-            prev_state = pair_states.get(ind_key)
+            prev_state = pair_states.get(state_key)
 
             try:
                 if prev_state is not None:
                     # Incremental update (hot path)
-                    new_state = indicator.update(candle, prev_state)
+                    new_state = indicator.update(candle, prev_state, **params)
                 else:
                     # Full calculation over buffered candles
                     candles = self._candle_buffer.get_all(
                         pair=pair, timeframe=candle.timeframe
                     )
                     if candles:
-                        new_state = indicator.calculate(candles)
+                        new_state = indicator.calculate(candles, **params)
                     else:
-                        new_state = indicator.calculate([candle])
+                        new_state = indicator.calculate([candle], **params)
 
-                pair_states[ind_key] = new_state
+                pair_states[state_key] = new_state
 
             except Exception as exc:
                 logger.error(
                     "Indicator %r update failed for %s: %s",
-                    ind_key, pair, exc,
+                    state_key, pair, exc,
                 )
 
         return pair_states
+
+    @property
+    def _dry_run_fee_rate(self) -> float:
+        """Simulated fee per side as a fraction (0.001 = 0.1 %)."""
+        return max(0.0, self._config.dry_run_fee_pct) / 100.0
+
+    def _get_indicator_specs(self) -> dict[str, tuple[str, dict[str, Any]]]:
+        """Indicator states required by the active strategy (cached per strategy)."""
+        if self._strategy_config is None:
+            return {}
+        cached = self._indicator_specs_cache
+        if cached is None or cached[0] is not self._strategy_config:
+            specs = self._strategy_loader.indicator_specs(self._strategy_config)
+            self._indicator_specs_cache = (self._strategy_config, specs)
+            return specs
+        return cached[1]
+
+    def _latest_indicator_value(
+        self, pair: str, state_key: str, field_name: str
+    ) -> float | None:
+        """Last non-None value of a list field in an indicator state."""
+        state = self._indicator_states.get(pair, {}).get(state_key)
+        if not state or not state.get(field_name):
+            return None
+        for v in reversed(state[field_name]):
+            if v is not None:
+                return v
+        return None
 
     def _warm_up_indicators(self, pair: str, historical: list[Candle]) -> None:
         """Feed historical candles into indicators to build initial state.
@@ -620,16 +681,16 @@ class TradingRunner:
         for c in historical:
             self._candle_buffer.add(c)
 
-        # Calculate initial state for each indicator
-        for ind_key in self._strategy_config.indicators_needed:
+        # Calculate initial state for each (indicator, params) spec
+        for state_key, (ind_key, params) in self._get_indicator_specs().items():
             try:
                 indicator = self._indicator_registry.get(ind_key)
-                state = indicator.calculate(historical)
-                self._indicator_states[pair][ind_key] = state
+                state = indicator.calculate(historical, **params)
+                self._indicator_states[pair][state_key] = state
             except KeyError:
                 logger.warning("Indicator %r not registered, skipping warmup", ind_key)
             except Exception as exc:
-                logger.error("Indicator %r warmup failed for %s: %s", ind_key, pair, exc)
+                logger.error("Indicator %r warmup failed for %s: %s", state_key, pair, exc)
 
     # ------------------------------------------------------------------
     # Signal execution
@@ -753,6 +814,12 @@ class TradingRunner:
                     "dry_run": True,
                 },
             )
+            # Simulated cash: debit the cost and the entry fee (live mode
+            # gets its balance from the exchange WS instead).
+            entry_fee = quantity * entry_price * self._dry_run_fee_rate
+            position.metadata["entry_fee"] = entry_fee
+            self._balance -= quantity * entry_price + entry_fee
+
             self._open_positions[pair] = position
             self._daily_trade_count += 1
 
@@ -882,7 +949,133 @@ class TradingRunner:
                 "Exit signal for %s: %s (reason: %s)",
                 pair, exit_signal.type.value, exit_signal.reason,
             )
-            await self._close_position(position, candle, exit_signal.reason)
+            # Partial take-profit levels (close_pct < 100) only sell part of
+            # the position; everything else closes it entirely.
+            pct_to_close = float((exit_signal.metadata or {}).get("pct_to_close", 100.0))
+            if exit_signal.reason.startswith("TAKE_PROFIT") and 0.0 < pct_to_close < 100.0:
+                await self._partial_close(position, candle, pct_to_close, exit_signal.reason)
+            else:
+                await self._close_position(position, candle, exit_signal.reason)
+
+    async def _partial_close(
+        self, position: Position, candle: Candle, pct_to_close: float, reason: str
+    ) -> None:
+        """Sell *pct_to_close* % of an open position (partial take-profit).
+
+        The remaining quantity stays open with its stop-loss, trailing stop
+        and remaining take-profit levels. Falls back to a full close when
+        the remainder would be below the exchange minimums.
+        """
+        pair = position.pair
+        exit_price = candle.close
+        close_qty = position.quantity * pct_to_close / 100.0
+
+        sym = self._symbol_info.get(pair)
+        if sym and sym.step_size > 0:
+            steps = math.floor(close_qty / sym.step_size)
+            precision = max(0, -int(math.floor(math.log10(sym.step_size))))
+            close_qty = round(steps * sym.step_size, precision)
+        remaining_qty = position.quantity - close_qty
+        min_notional = sym.min_notional if sym else 0.0
+        min_qty = sym.min_qty if sym else 0.0
+        if (
+            close_qty <= 0.0
+            or remaining_qty <= 0.0
+            or remaining_qty * exit_price < min_notional
+            or remaining_qty < min_qty
+            or close_qty * exit_price < min_notional
+        ):
+            await self._close_position(position, candle, reason)
+            return
+
+        if self._config.dry_run:
+            logger.info(
+                "[DRY-RUN] PARTIAL SELL %s: qty=%.8f (%.0f%%) at %.2f (reason: %s)",
+                pair, close_qty, pct_to_close, exit_price, reason,
+            )
+        else:
+            self._pending_close.add(pair)
+            # The exchange SL covers the full quantity: cancel it, sell the
+            # partial quantity, then re-arm the SL on what remains.
+            sl_order_id = position.metadata.get("sl_order_id")
+            if sl_order_id and self._exchange_rest is not None:
+                await self._exchange_rest.cancel_order(pair, sl_order_id)
+            try:
+                order_result = await self._exchange_rest.place_order(
+                    pair=pair, side="SELL", quantity=close_qty, order_type="MARKET",
+                )
+                fills = order_result.get("fills", [])
+                if fills:
+                    total_cost = sum(float(f["price"]) * float(f["qty"]) for f in fills)
+                    total_qty = sum(float(f["qty"]) for f in fills)
+                    exit_price = total_cost / total_qty if total_qty > 0 else exit_price
+                logger.info(
+                    "LIVE PARTIAL SELL %s: qty=%.8f — orderId=%s",
+                    pair, close_qty, order_result.get("orderId"),
+                )
+            except Exception as exc:
+                logger.error("Failed to execute partial SELL for %s: %s", pair, exc)
+                remaining_qty = position.quantity  # nothing sold: re-arm SL on full qty
+                close_qty = 0.0
+            await self._rearm_stop_loss(position, remaining_qty)
+            self._pending_close.discard(pair)
+            if close_qty <= 0.0:
+                return
+
+        # Record the sold part as its own closed trade.
+        sold = dataclasses.replace(
+            position,
+            quantity=close_qty,
+            exit_price=exit_price,
+            exit_time=candle.timestamp,
+            exit_reason=reason,
+            status=PositionStatus.CLOSED,
+            metadata=dict(position.metadata),
+        )
+        sold.update_pnl(exit_price)
+        fees = 0.0
+        if self._config.dry_run:
+            share = close_qty / position.quantity
+            entry_fee = position.metadata.get("entry_fee", 0.0)
+            fees = entry_fee * share + exit_price * close_qty * self._dry_run_fee_rate
+            position.metadata["entry_fee"] = entry_fee * (1.0 - share)
+        trade = Trade.from_position(sold, fees=fees)
+        trade.strategy_name = position.metadata.get("strategy_name", "")
+        self._daily_trades.append(trade)
+        self._daily_pnl_usdt += trade.pnl_usdt
+        if trade.pnl_usdt < 0:
+            self._last_loss_time = candle.timestamp
+        if self._config.dry_run:
+            self._balance += exit_price * close_qty * (1.0 - self._dry_run_fee_rate)
+
+        position.quantity = remaining_qty
+        await self._save_partial_trade_to_db(position, trade)
+
+        await self._send_notification(
+            f"{'[DRY-RUN] ' if self._config.dry_run else ''}PARTIAL SELL {pair} "
+            f"({pct_to_close:.0f}%)\n"
+            f"Exit: {exit_price:.2f}\n"
+            f"PnL: {trade.pnl_usdt:+.2f} USDT ({trade.pnl_pct:+.2f}%)\n"
+            f"Remaining: {remaining_qty:.8f}\n"
+            f"Reason: {reason}"
+        )
+
+    async def _rearm_stop_loss(self, position: Position, quantity: float) -> None:
+        """Place a new exchange stop-loss order for *quantity* (live mode)."""
+        if self._exchange_rest is None or position.stop_loss <= 0.0 or quantity <= 0.0:
+            return
+        sym = self._symbol_info.get(position.pair)
+        try:
+            sl_result = await self._exchange_rest.set_stop_loss(
+                pair=position.pair,
+                quantity=quantity,
+                stop_price=position.stop_loss,
+                tick_size=sym.tick_size if sym else 0.01,
+            )
+            position.metadata["sl_order_id"] = str(sl_result.get("orderId", ""))
+        except Exception as exc:
+            position.metadata.pop("sl_order_id", None)
+            logger.error("Failed to re-arm stop-loss for %s: %s", position.pair, exc)
 
     async def _update_trailing_on_tick(
         self, pair: str, price: float, timestamp: datetime
@@ -993,7 +1186,11 @@ class TradingRunner:
         position.update_pnl(exit_price)
 
         # Create Trade record
-        fees = 0.0  # TODO: get actual fees from exchange fills
+        # Dry-run: simulated fees (entry + exit). Live: TODO read the
+        # commissions from the exchange fills.
+        fees = 0.0
+        if self._config.dry_run:
+            fees = position.metadata.get("entry_fee", 0.0) + exit_price * position.quantity * self._dry_run_fee_rate
         trade = Trade.from_position(position, fees=fees)
         trade.strategy_name = position.metadata.get("strategy_name", "")
         self._daily_trades.append(trade)
@@ -1009,7 +1206,7 @@ class TradingRunner:
         # Only adjust manually in dry_run.
         if self._config.dry_run:
             notional = exit_price * position.quantity
-            self._balance += notional
+            self._balance += notional * (1.0 - self._dry_run_fee_rate)
 
         # Remove from open positions
         if pair in self._open_positions:
@@ -1152,6 +1349,31 @@ class TradingRunner:
     # ------------------------------------------------------------------
     # Helper: daily PnL percentage
     # ------------------------------------------------------------------
+
+    async def _roll_daily_stats(self, timestamp: datetime) -> None:
+        """Reset the daily counters when a candle opens a new UTC day.
+
+        Without this, max_daily_trades / max_daily_loss / circuit breakers
+        counted every trade since the engine started and ended up blocking
+        all new entries until a restart.
+        """
+        day = _as_utc(timestamp).date()
+        if self._stats_day is None:
+            self._stats_day = day
+            return
+        if day == self._stats_day:
+            return
+        # Persist the finished day before clearing it.
+        await self._save_daily_stats(day=self._stats_day)
+        logger.info(
+            "New trading day %s: resetting daily stats (%d trades, PnL=%.2f USDT)",
+            day, self._daily_trade_count, self._daily_pnl_usdt,
+        )
+        self._stats_day = day
+        self._daily_trades = []
+        self._daily_trade_count = 0
+        self._daily_pnl_usdt = 0.0
+        self._cb_trades_offset = 0
 
     def _daily_pnl_pct(self) -> float:
         """Calculate daily PnL as percentage of starting capital."""
@@ -1367,6 +1589,9 @@ class TradingRunner:
                     entry_reason=t.get("entry_reason", ""),
                     metadata=metadata if isinstance(metadata, dict) else {},
                 )
+                # Keep the DB row id so the exit updates this row.
+                if t.get("id"):
+                    position.metadata["trade_id"] = str(t["id"])
 
                 self._open_positions[pair] = position
                 logger.info(
@@ -1467,6 +1692,24 @@ class TradingRunner:
 
         try:
             if status == "CLOSED" and trade is not None:
+                trade_id = position.metadata.get("trade_id")
+                if trade_id:
+                    # Close the row created at entry instead of inserting a
+                    # second one: a lingering OPEN row would be restored as
+                    # a ghost position at the next restart.
+                    updated = await self._repository.update_trade(
+                        trade_id,
+                        status="CLOSED",
+                        quantity=trade.quantity,
+                        exit_price=trade.exit_price,
+                        exit_time=_naive(trade.exit_time),
+                        pnl_usdt=trade.pnl_usdt,
+                        pnl_pct=trade.pnl_pct,
+                        fees=trade.fees,
+                        exit_reason=trade.exit_reason,
+                    )
+                    if updated is not None:
+                        return
                 await self._repository.save_trade(trade.to_dict())
             elif status == "OPEN":
                 # Save as an open trade record
@@ -1484,18 +1727,32 @@ class TradingRunner:
                         "stop_loss": position.stop_loss,
                     },
                 }
-                await self._repository.save_trade(trade_data)
+                trade_id = await self._repository.save_trade(trade_data)
+                if trade_id:
+                    position.metadata["trade_id"] = str(trade_id)
         except Exception as exc:
             logger.error("Failed to save trade to DB: %s", exc)
 
-    async def _save_daily_stats(self) -> None:
-        """Calculate and save daily trading statistics."""
+    async def _save_partial_trade_to_db(self, position: Position, trade: Trade) -> None:
+        """Persist a partial exit: new CLOSED row + reduced qty on the open row."""
+        if self._repository is None:
+            return
+        try:
+            await self._repository.save_trade(trade.to_dict())
+            trade_id = position.metadata.get("trade_id")
+            if trade_id:
+                await self._repository.update_trade(trade_id, quantity=position.quantity)
+        except Exception as exc:
+            logger.error("Failed to save partial trade to DB: %s", exc)
+
+    async def _save_daily_stats(self, day: Any = None) -> None:
+        """Calculate and save daily trading statistics (for *day*, default today)."""
         if self._repository is None:
             return
 
         try:
             stats = self._portfolio_manager.calculate_daily_stats(self._daily_trades)
-            stats["date"] = datetime.now(timezone.utc).date()
+            stats["date"] = day or self._stats_day or datetime.now(timezone.utc).date()
             stats["mode"] = self.mode
             stats["trust_level"] = self._get_trust_level()
             stats["open_positions"] = self.open_positions_count

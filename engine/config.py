@@ -56,6 +56,11 @@ class EngineConfig:
     max_drawdown_pct: float = 15.0
     max_daily_trades: int = 20
 
+    # -- Dry-run simulation --------------------------------------------
+    # Exchange fee applied on each side of simulated trades (Binance spot
+    # standard = 0.1 %), so dry-run results are comparable with live.
+    dry_run_fee_pct: float = 0.1
+
     # -- Binance credentials -------------------------------------------
     binance_api_key: str = ""
     binance_api_secret: str = ""
@@ -109,6 +114,7 @@ class EngineConfig:
         env_mapping: dict[str, str] = {
             "KAIROS_PAIRS": "pairs",
             "KAIROS_DRY_RUN": "dry_run",
+            "KAIROS_DRY_RUN_FEE_PCT": "dry_run_fee_pct",
             "KAIROS_TESTNET": "testnet",
             "KAIROS_CAPITAL_PER_PAIR": "capital_per_pair",
             "KAIROS_USE_FULL_BALANCE": "use_full_balance",
@@ -197,6 +203,7 @@ def _parse_env_value(field_name: str, value: str) -> Any:
     float_fields = {
         "capital_per_pair", "stop_loss_pct", "trailing_activation_pct",
         "trailing_distance_pct", "max_daily_loss_pct", "max_drawdown_pct",
+        "dry_run_fee_pct",
     }
     if field_name in float_fields:
         return float(value)

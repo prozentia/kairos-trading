@@ -120,16 +120,20 @@ class ADXDMI(BaseIndicator):
 
         # Step 4: Compute ADX (smoothed DX)
         # First ADX = SMA of first *period* DX values
+        # dx_list[j] belongs to candle index (period + j).
         if len(dx_list) >= period:
             first_adx = sum(dx_list[:period]) / period
-            # The first ADX corresponds to index = period + period = 2 * period
-            adx_idx = 2 * period
+            # The first ADX closes the first *period* DX values, i.e. candle
+            # index period + (period - 1).
+            adx_idx = 2 * period - 1
             if adx_idx < n:
                 adx_values[adx_idx] = first_adx
 
             prev_adx = first_adx
             for j in range(period, len(dx_list)):
-                adx_idx = period + 1 + j  # offset by period+1 (start of dx_list)
+                # Same candle as dx_list[j]; the previous offset (+1) dropped
+                # the latest candle and diverged from update().
+                adx_idx = period + j
                 if adx_idx < n:
                     new_adx = (prev_adx * (period - 1) + dx_list[j]) / period
                     adx_values[adx_idx] = new_adx

@@ -29,6 +29,7 @@ from typing import Any
 
 from core.indicators.registry import get_registry
 from core.models import Signal, SignalType, StrategyConfig
+from core.strategy.loader import state_key
 
 
 class StrategyEvaluator:
@@ -178,7 +179,12 @@ class StrategyEvaluator:
         registry = get_registry()
         indicator = registry.get(indicator_key)
 
-        state = states.get(indicator_key)
+        # States are keyed by indicator + params (see loader.state_key);
+        # fall back to the default-params state for callers that only
+        # provide bare indicator keys.
+        state = states.get(state_key(indicator_key, condition.get("params")))
+        if state is None:
+            state = states.get(indicator_key)
         if state is None:
             # Indicator has not been computed yet -- cannot satisfy.
             return False

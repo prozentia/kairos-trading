@@ -130,6 +130,10 @@ class MSBGlissant(BaseIndicator):
             "break_down": break_down,
             "bb_lower": bb_lower,
             "prices": prices,
+            # Needed by update() for swing detection; must stay aligned
+            # with `prices` (one entry per candle).
+            "_candle_highs": [c.high for c in candles],
+            "_candle_lows": [c.low for c in candles],
         }
 
     def update(self, candle: Candle, state: dict[str, Any], **params: Any) -> dict[str, Any]:

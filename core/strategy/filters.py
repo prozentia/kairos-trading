@@ -370,6 +370,7 @@ class SignalFilter:
 
         checks = [
             ("ema_trend", self._check_ema_trend),
+            ("adx_trend", self._check_adx_trend),
             ("trading_hours", self._check_trading_hours),
             ("loss_cooldown", self._check_loss_cooldown),
             ("max_daily_trades", self._check_max_daily_trades),
@@ -407,6 +408,25 @@ class SignalFilter:
         if price < ema_value:
             return False, (
                 f"EMA trend filter: price {price:.2f} < EMA {ema_value:.2f}."
+            )
+
+        return True, ""
+
+    def _check_adx_trend(
+        self,
+        config: dict[str, Any],
+        context: dict[str, Any],
+    ) -> tuple[bool, str]:
+        """Reject BUY when the trend is too weak (ADX below min_value)."""
+        min_value = config.get("min_value", 25.0)
+        adx_value = context.get("adx_value")
+
+        if adx_value is None:
+            return False, "ADX trend filter: ADX not available yet."
+
+        if adx_value < min_value:
+            return False, (
+                f"ADX trend filter: ADX {adx_value:.1f} < {min_value:.1f}."
             )
 
         return True, ""

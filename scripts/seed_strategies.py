@@ -68,27 +68,27 @@ STRATEGIES = [
             "entry_conditions": [
                 {
                     "indicator": "heikin_ashi",
-                    "params": {"timeframe": "5m"},
+                    "params": {},
                     "operator": "is_green",
                     "value": None,
                 },
                 {
                     "indicator": "bollinger",
-                    "params": {"period": 20, "std_dev": 2.0, "timeframe": "1m"},
+                    "params": {"period": 20, "std_dev": 2.0},
                     "operator": "touch_lower",
                     "value": None,
                 },
                 {
                     "indicator": "msb_glissant",
                     "params": {},
-                    "operator": "break_above",
+                    "operator": "break_up",
                     "value": None,
                 },
             ],
             "exit_conditions": [
                 {
                     "indicator": "heikin_ashi",
-                    "params": {"timeframe": "5m"},
+                    "params": {},
                     "operator": "is_red",
                     "value": None,
                 },
@@ -189,7 +189,7 @@ STRATEGIES = [
                 {
                     "indicator": "adx_dmi",
                     "params": {"period": 14},
-                    "operator": "above",
+                    "operator": "trending",
                     "value": 25,
                 },
             ],
@@ -246,13 +246,13 @@ STRATEGIES = [
                 {
                     "indicator": "macd",
                     "params": {"fast_period": 12, "slow_period": 26, "signal_period": 9},
-                    "operator": "cross_above_signal",
+                    "operator": "cross_up",
                     "value": None,
                 },
                 {
                     "indicator": "volume",
-                    "params": {"sma_period": 20},
-                    "operator": "above_sma",
+                    "params": {"ma_period": 20},
+                    "operator": "above_average",
                     "value": None,
                 },
             ],
@@ -266,7 +266,7 @@ STRATEGIES = [
                 {
                     "indicator": "macd",
                     "params": {"fast_period": 12, "slow_period": 26, "signal_period": 9},
-                    "operator": "cross_below_signal",
+                    "operator": "cross_down",
                     "value": None,
                 },
             ],
@@ -304,27 +304,27 @@ STRATEGIES = [
                 {
                     "indicator": "donchian",
                     "params": {"period": 20},
-                    "operator": "break_upper",
+                    "operator": "breakout_up",
                     "value": None,
                 },
                 {
                     "indicator": "volume",
-                    "params": {"sma_period": 20, "multiplier": 2.0},
-                    "operator": "above_sma_multiplied",
-                    "value": None,
+                    "params": {"ma_period": 20},
+                    "operator": "spike",
+                    "value": 2.0,
                 },
             ],
             "exit_conditions": [
                 {
                     "indicator": "donchian",
                     "params": {"period": 20},
-                    "operator": "break_lower",
+                    "operator": "breakout_down",
                     "value": None,
                 },
                 {
                     "indicator": "adx_dmi",
                     "params": {"period": 14},
-                    "operator": "below",
+                    "operator": "not_trending",
                     "value": 20,
                 },
             ],

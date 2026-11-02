@@ -168,6 +168,8 @@ async def test_timeframe_aggregation_produces_5m() -> None:
         name="test", pairs=["BTCUSDT"], timeframe="5m",
         indicators_needed=[], is_active=True,
     )
+    # _load_strategy() normally does this after loading the strategy.
+    runner._setup_timeframe_aggregator()
 
     # Feed exactly 5 minutes of candles (0:00 to 0:04)
     candles = _make_1m_candles(5)
@@ -375,7 +377,11 @@ async def test_full_trade_lifecycle_dry_run() -> None:
     assert "STOP_LOSS" in trade.exit_reason
 
     # Step 5: Verify persistence and notifications
-    assert mock_repo.save_trade.await_count >= 2  # Once for open, once for close
+    # Entry inserts the OPEN row; the exit updates that same row (no second
+    # insert, otherwise the OPEN row would be restored as a ghost position).
+    assert mock_repo.save_trade.await_count == 1
+    mock_repo.update_trade.assert_awaited_once()
+    assert mock_repo.update_trade.await_args.kwargs["status"] == "CLOSED"
     assert mock_notifier.send.await_count >= 2  # Once for buy, once for sell
 
 

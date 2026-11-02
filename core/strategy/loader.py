@@ -6,10 +6,94 @@ runs structural validation to catch misconfiguration early.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from core.indicators.registry import get_registry
 from core.models import StrategyConfig
+
+# Condition params that are not indicator parameters. Multi-timeframe
+# conditions are not supported yet: indicators always run on the strategy TF.
+NON_INDICATOR_PARAMS = frozenset({"timeframe"})
+
+
+def indicator_params(params: dict[str, Any] | None) -> dict[str, Any]:
+    """Return the indicator parameters of a condition (non-indicator keys removed)."""
+    if not params:
+        return {}
+    return {k: v for k, v in params.items() if k not in NON_INDICATOR_PARAMS}
+
+
+def state_key(indicator: str, params: dict[str, Any] | None = None) -> str:
+    """Key under which an indicator state is stored.
+
+    Without params the bare indicator key is used (default parameters), so
+    strategies written without params keep their historical behaviour.
+    With params, each distinct parameter set gets its own state, e.g.
+    ``ema|{"period": 200}``, so EMA 50 and EMA 200 can coexist.
+    """
+    clean = indicator_params(params)
+    if not clean:
+        return indicator
+    return f"{indicator}|{json.dumps(clean, sort_keys=True)}"
+
+
+def normalize_filters(filters: Any) -> dict[str, Any]:
+    """Convert the list filter format into the dict format read by the engine.
+
+    List format (frontend / seed templates)::
+
+        [{"type": "ema_trend", "params": {"period": 50}, "enabled": true}]
+
+    Dict format (SignalFilter.check_all)::
+
+        {"ema_trend": {"enabled": true, "ema_period": 50}}
+    """
+    if not filters:
+        return {}
+    if isinstance(filters, dict):
+        return filters
+    normalized: dict[str, Any] = {}
+    for item in filters:
+        if not isinstance(item, dict) or not item.get("type"):
+            continue
+        ftype = item["type"]
+        params = dict(item.get("params") or {})
+        cfg: dict[str, Any] = {"enabled": item.get("enabled", True)}
+        if ftype == "ema_trend":
+            if "period" in params:
+                cfg["ema_period"] = params.pop("period")
+            params.pop("indicator", None)
+            params.pop("operator", None)
+        elif ftype == "adx_trend":
+            if "period" in params:
+                cfg["adx_period"] = params.pop("period")
+            params.pop("indicator", None)
+        cfg.update(params)
+        normalized[ftype] = cfg
+    return normalized
+
+
+# filter type -> (indicator key, filter field holding its period)
+TREND_FILTER_INDICATORS = {
+    "ema_trend": ("ema", "ema_period"),
+    "adx_trend": ("adx_dmi", "adx_period"),
+}
+
+
+def trend_filter_specs(filters: Any) -> dict[str, tuple[str, dict[str, Any] | None]]:
+    """Indicator (key, params) read by each enabled trend filter.
+
+    Params are None when the filter uses the indicator's default period.
+    """
+    normalized = normalize_filters(filters)
+    specs: dict[str, tuple[str, dict[str, Any] | None]] = {}
+    for ftype, (indicator, period_field) in TREND_FILTER_INDICATORS.items():
+        cfg = normalized.get(ftype)
+        if isinstance(cfg, dict) and cfg.get("enabled", True):
+            params = {"period": cfg[period_field]} if period_field in cfg else None
+            specs[ftype] = (indicator, params)
+    return specs
 
 
 class StrategyLoader:
@@ -25,12 +109,49 @@ class StrategyLoader:
             A populated StrategyConfig instance.
         """
         config = StrategyConfig.from_dict(data)
+        config.filters = normalize_filters(config.filters)
 
         # Auto-detect which indicators the strategy needs.
         if not config.indicators_needed:
             config.indicators_needed = self._extract_indicators(config)
 
         return config
+
+    def indicator_specs(self, config: StrategyConfig) -> dict[str, tuple[str, dict[str, Any]]]:
+        """List every indicator state the engine must compute.
+
+        Returns:
+            Mapping ``state_key -> (indicator_key, params)``. Includes the
+            default-parameter state of every ``indicators_needed`` entry,
+            one state per distinct params found in the conditions, and the
+            states required by the ema_trend / adx_trend filters.
+        """
+        specs: dict[str, tuple[str, dict[str, Any]]] = {}
+
+        def add(indicator: str, params: dict[str, Any] | None = None) -> None:
+            clean = indicator_params(params)
+            specs.setdefault(state_key(indicator, clean), (indicator, clean))
+
+        for key in config.indicators_needed:
+            add(key)
+
+        def walk(node: Any) -> None:
+            if isinstance(node, list):
+                for child in node:
+                    walk(child)
+            elif isinstance(node, dict):
+                if "indicator" in node:
+                    add(node["indicator"], node.get("params"))
+                for child in node.get("conditions", []):
+                    walk(child)
+
+        walk(config.entry_conditions)
+        walk(config.exit_conditions)
+
+        for indicator, params in trend_filter_specs(config.filters).values():
+            add(indicator, params)
+
+        return specs
 
     def validate(self, config: StrategyConfig) -> list[str]:
         """Validate a StrategyConfig and return a list of error messages.
