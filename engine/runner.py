@@ -283,11 +283,14 @@ class TradingRunner:
             except Exception as exc:
                 logger.error("Failed to subscribe to klines: %s", exc)
 
-            try:
-                await self._exchange_ws.subscribe_user_data(self.on_user_data)
-                logger.info("Subscribed to user data stream")
-            except Exception as exc:
-                logger.warning("Failed to subscribe to user data: %s", exc)
+            # Account events (fills, balances) only matter in live mode: in
+            # dry-run they would mix the real account into the simulation.
+            if not self._config.dry_run:
+                try:
+                    await self._exchange_ws.subscribe_user_data(self.on_user_data)
+                    logger.info("Subscribed to user data stream")
+                except Exception as exc:
+                    logger.warning("Failed to subscribe to user data: %s", exc)
 
         self._running = True
         logger.info(

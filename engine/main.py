@@ -57,8 +57,9 @@ async def main() -> None:
     cache = None
     notifier = None
 
-    # Exchange adapters
-    if config.binance_api_key:
+    # Exchange adapters. Market data (klines, exchange info) is public, so
+    # dry-run also works without API keys; live trading requires them.
+    if config.binance_api_key or config.dry_run:
         try:
             from adapters.exchanges.binance_ws import BinanceWebSocket
             from adapters.exchanges.binance_rest import BinanceREST
@@ -73,7 +74,10 @@ async def main() -> None:
                 api_secret=config.binance_api_secret,
                 testnet=config.testnet,
             )
-            logger.info("Binance adapters initialized (testnet=%s)", config.testnet)
+            logger.info(
+                "Binance adapters initialized (testnet=%s, keys=%s)",
+                config.testnet, "yes" if config.binance_api_key else "no, public data only",
+            )
         except ImportError as exc:
             logger.warning("Binance adapter import failed: %s", exc)
     else:
