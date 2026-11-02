@@ -61,3 +61,6 @@ adapters/database/migrations/versions/__pycache__/
 *.pem
 *.key
 credentials.json
+
+# Historical klines for scripts/replay_backtest.py
+data/klines/
