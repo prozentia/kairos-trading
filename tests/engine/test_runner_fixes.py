@@ -365,3 +365,110 @@ class TestDryRunAccounting:
         await runner._close_position(runner._open_positions["BTCUSDT"], _candle(101.0), "STRATEGY_EXIT")
         assert runner._daily_trades[0].fees == 0.0
         assert runner._daily_trades[0].pnl_usdt == pytest.approx(1.0)
+
+
+# ----------------------------------------------------------------------
+# Multi-timeframe conditions
+# ----------------------------------------------------------------------
+
+MTF_STRATEGY = {
+    "name": "HA MTF", "pairs": ["BTCUSDT"], "timeframe": "5m",
+    "entry_conditions": [
+        {"indicator": "heikin_ashi", "params": {"timeframe": "15m"}, "operator": "is_green"},
+        {"indicator": "heikin_ashi", "operator": "flip_to_green"},
+    ],
+    "exit_conditions": [{"indicator": "heikin_ashi", "operator": "flip_to_red"}],
+    "risk": {"stop_loss_pct": 2.0},
+}
+
+
+def _minute_candle(i: int, close: float) -> Candle:
+    return Candle(
+        timestamp=T0 + timedelta(minutes=i), open=close, high=close + 0.5,
+        low=close - 0.5, close=close, volume=1.0, pair="BTCUSDT",
+        timeframe="1m", is_closed=True,
+    )
+
+
+class TestMultiTimeframe:
+    def _load(self, runner: TradingRunner) -> None:
+        runner._running = True
+        runner._strategy_config = StrategyLoader().load_from_dict(dict(MTF_STRATEGY))
+        runner._setup_timeframe_aggregator()
+
+    def test_loader_lists_timeframes_strategy_last(self) -> None:
+        config = StrategyLoader().load_from_dict(dict(MTF_STRATEGY))
+        assert StrategyLoader().timeframes(config) == ["15m", "5m"]
+        specs = StrategyLoader().indicator_specs(config)
+        assert specs["heikin_ashi@15m"] == ("heikin_ashi", {}, "15m")
+        assert specs["heikin_ashi"] == ("heikin_ashi", {}, None)
+
+    def test_aggregator_builds_every_timeframe(self, runner: TradingRunner) -> None:
+        self._load(runner)
+        assert runner._effective_strategy_tf == "5m"
+        assert runner._timeframe_aggregator.target_timeframes == ["15m", "5m"]
+
+    def test_warmup_only_fills_states_of_that_timeframe(self, runner: TradingRunner) -> None:
+        self._load(runner)
+        hist_15m = [
+            Candle(timestamp=T0 - timedelta(minutes=15 * (30 - i)), open=100, high=101,
+                   low=99, close=100 + i, volume=1, pair="BTCUSDT", timeframe="15m")
+            for i in range(30)
+        ]
+        runner._warm_up_indicators("BTCUSDT", hist_15m, "15m")
+        states = runner._indicator_states["BTCUSDT"]
+        assert "heikin_ashi@15m" in states
+        assert "heikin_ashi" not in states
+
+    @pytest.mark.asyncio
+    async def test_higher_tf_state_follows_15m_candles(self, runner: TradingRunner) -> None:
+        self._load(runner)
+        runner._execute_signal = AsyncMock()  # type: ignore[method-assign]
+        evaluated: list[str] = []
+        original = runner._process_strategy_candle
+
+        async def spy(pair: str, candle: Candle) -> None:
+            evaluated.append(candle.timeframe)
+            await original(pair, candle)
+
+        runner._process_strategy_candle = spy  # type: ignore[method-assign]
+        for i in range(60):
+            await runner.on_candle({
+                "pair": "BTCUSDT", "timeframe": "1m",
+                "timestamp": (T0 + timedelta(minutes=i)).isoformat(),
+                "open": 100 + i, "high": 101 + i, "low": 99 + i, "close": 100.5 + i,
+                "volume": 1.0, "is_closed": True,
+            })
+        states = runner._indicator_states["BTCUSDT"]
+        # 60 one-minute candles -> 4 closed 15m candles, 12 closed 5m candles
+        # (the last bucket closes on the next candle).
+        assert len(states["heikin_ashi@15m"]["is_green"]) in (3, 4)
+        assert len(states["heikin_ashi"]["is_green"]) in (11, 12)
+        assert set(evaluated) == {"5m"}
+
+
+# ----------------------------------------------------------------------
+# Time-based exit (risk.max_hold_minutes)
+# ----------------------------------------------------------------------
+
+class TestMaxHoldMinutes:
+    @pytest.mark.asyncio
+    async def test_position_closes_after_max_hold(self, runner: TradingRunner) -> None:
+        runner._running = True
+        runner._strategy_config = StrategyLoader().load_from_dict({
+            "name": "t", "pairs": ["BTCUSDT"], "timeframe": "1m",
+            "entry_conditions": [{"indicator": "rsi", "operator": "above", "value": 0}],
+            "risk": {"stop_loss_pct": 5.0, "max_hold_minutes": 30,
+                     "trailing_activation_pct": 0.0, "trailing_distance_pct": 0.0},
+        })
+        signal = Signal(type=SignalType.BUY, pair="BTCUSDT", price=100.0,
+                        timestamp=T0, reason="test", strategy_name="t", timeframe="1m")
+        await runner._execute_signal(signal, "BTCUSDT", _candle(100.0, minute=0))
+        position = runner._open_positions["BTCUSDT"]
+        assert position.metadata["max_hold_minutes"] == 30
+
+        await runner._check_exits("BTCUSDT", _candle(100.0, minute=29))
+        assert "BTCUSDT" in runner._open_positions
+        await runner._check_exits("BTCUSDT", _candle(100.0, minute=30))
+        assert "BTCUSDT" not in runner._open_positions
+        assert runner._daily_trades[-1].exit_reason.startswith("TIME_EXIT")

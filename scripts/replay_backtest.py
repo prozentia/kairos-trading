@@ -5,7 +5,8 @@ Unlike a separate backtest implementation, this drives the production engine
 fees) candle by candle, so results reflect what the bot would really do.
 
 Warmup mirrors production: 500 candles of the strategy timeframe are fed to
-``_warm_up_indicators()`` before trading starts.
+``_warm_up_indicators()`` before trading starts (once per timeframe for
+multi-timeframe strategies).
 
 Data: Binance public monthly 1m klines (data.binance.vision), stored as the
 original zip files in ``--data``. Use ``--download`` to fetch missing months.
@@ -191,8 +192,11 @@ async def replay(defn: dict[str, Any], data_dir: str, months: list[str] | None,
 
     runner._roll_daily_stats = roll
 
-    warm_agg = TimeframeAggregator([tf]) if tf != "1m" else None
-    warm: dict[str, list[Candle]] | None = {p: [] for p in pairs}
+    timeframes = runner._strategy_timeframes()
+    htf_targets = [t for t in timeframes if t != "1m"]
+    warm_agg = TimeframeAggregator(htf_targets) if htf_targets else None
+    warm: dict[tuple[str, str], list[Candle]] | None = {(p, t): [] for p in pairs for t in timeframes}
+    warm_minutes = WARMUP_CANDLES * max(TF_MINUTES[t] for t in timeframes)
     warm_until = None
     first_px: dict[str, float] = {}
     last_px: dict[str, float] = {}
@@ -208,15 +212,17 @@ async def replay(defn: dict[str, Any], data_dir: str, months: list[str] | None,
         first_px.setdefault(pair, candle.close)
         last_px[pair] = candle.close
         if warm_until is None:
-            warm_until = candle.timestamp + timedelta(minutes=WARMUP_CANDLES * TF_MINUTES[tf])
+            warm_until = candle.timestamp + timedelta(minutes=warm_minutes)
         if candle.timestamp < warm_until:
-            htf = warm_agg.on_candle(candle) if warm_agg else [candle]
-            warm[pair].extend(c for c in htf if c.timeframe == tf)
+            done = (warm_agg.on_candle(candle) if warm_agg else []) + [candle]
+            for c in done:
+                if (pair, c.timeframe) in warm:
+                    warm[(pair, c.timeframe)].append(c)
             continue
         if warm is not None:
             # End of warmup: same path as _initialize_pair() in production.
-            for p, history in warm.items():
-                runner._warm_up_indicators(p, history)
+            for (p, t), history in warm.items():
+                runner._warm_up_indicators(p, history[-WARMUP_CANDLES:], t)
             warm = None
         await runner.on_candle({
             "pair": pair, "timeframe": "1m", "timestamp": candle.timestamp.isoformat() + "+00:00",

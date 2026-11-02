@@ -33,6 +33,7 @@ from core.models import (
 from core.indicators.registry import IndicatorRegistry, get_registry
 from core.strategy.evaluator import StrategyEvaluator
 from core.strategy.loader import (
+    IndicatorSpec,
     StrategyLoader,
     state_key as loader_state_key,
     trend_filter_specs,
@@ -138,7 +139,7 @@ class TradingRunner:
         self._open_positions: dict[str, Position] = {}  # pair -> Position
         self._indicator_states: dict[str, dict[str, Any]] = {}  # pair -> {state_key: state}
         # (strategy_config, specs) -- see _get_indicator_specs()
-        self._indicator_specs_cache: tuple[Any, dict[str, tuple[str, dict[str, Any]]]] | None = None
+        self._indicator_specs_cache: tuple[Any, dict[str, IndicatorSpec]] | None = None
         self._daily_trades: list[Trade] = []
         self._daily_trade_count: int = 0
         self._daily_pnl_usdt: float = 0.0
@@ -394,21 +395,25 @@ class TradingRunner:
                 len(self._open_positions),
             )
 
+        completed_candles: list[Candle] = []
         if self._timeframe_aggregator is not None:
-            # Aggregate 1m candles into higher timeframe (e.g. 5m).
+            # Aggregate 1m candles into the higher timeframes (e.g. 5m, 15m).
             completed_candles = self._timeframe_aggregator.on_candle(candle)
-
-            # Buffer higher-TF candles.
             for htf_candle in completed_candles:
                 self._candle_buffer.add(htf_candle)
+        if self._effective_strategy_tf == candle.timeframe:
+            completed_candles.append(candle)
 
-            # Process each completed higher-TF candle through the pipeline.
-            for htf_candle in completed_candles:
-                if htf_candle.timeframe == self._effective_strategy_tf:
-                    await self._process_strategy_candle(pair, htf_candle)
-        else:
-            # Strategy runs on base timeframe -- process directly.
-            await self._process_strategy_candle(pair, candle)
+        # Multi-timeframe: refresh the indicators of the other timeframes
+        # first, so the strategy candle closing on the same minute sees them.
+        strategy_candle = None
+        for htf_candle in completed_candles:
+            if htf_candle.timeframe == self._effective_strategy_tf:
+                strategy_candle = htf_candle
+            else:
+                self._update_indicators(pair, htf_candle)
+        if strategy_candle is not None:
+            await self._process_strategy_candle(pair, strategy_candle)
 
         # Step 4: Check exits on the base-TF candle price
         await self._check_exits(pair, candle)
@@ -599,9 +604,11 @@ class TradingRunner:
 
         pair_states = self._indicator_states[pair]
 
-        # One state per (indicator, params) used by the strategy, so the
-        # params written in conditions/filters are honoured.
-        for state_key, (ind_key, params) in self._get_indicator_specs().items():
+        # One state per (indicator, params, timeframe) used by the strategy;
+        # only the states of this candle's timeframe are updated.
+        for state_key, (ind_key, params, spec_tf) in self._get_indicator_specs().items():
+            if (spec_tf or self._effective_strategy_tf) != candle.timeframe:
+                continue
             try:
                 indicator = self._indicator_registry.get(ind_key)
             except KeyError:
@@ -639,7 +646,7 @@ class TradingRunner:
         """Simulated fee per side as a fraction (0.001 = 0.1 %)."""
         return max(0.0, self._config.dry_run_fee_pct) / 100.0
 
-    def _get_indicator_specs(self) -> dict[str, tuple[str, dict[str, Any]]]:
+    def _get_indicator_specs(self) -> dict[str, IndicatorSpec]:
         """Indicator states required by the active strategy (cached per strategy)."""
         if self._strategy_config is None:
             return {}
@@ -662,7 +669,9 @@ class TradingRunner:
                 return v
         return None
 
-    def _warm_up_indicators(self, pair: str, historical: list[Candle]) -> None:
+    def _warm_up_indicators(
+        self, pair: str, historical: list[Candle], timeframe: str | None = None
+    ) -> None:
         """Feed historical candles into indicators to build initial state.
 
         Parameters
@@ -671,11 +680,18 @@ class TradingRunner:
             Trading pair being warmed up.
         historical : list[Candle]
             Historical candle data, oldest first.
+        timeframe : str, optional
+            Timeframe of *historical* (default: the strategy timeframe).
+            Only the indicator states of that timeframe are computed.
         """
         if not historical or self._strategy_config is None:
             return
+        timeframe = timeframe or self._effective_strategy_tf
 
-        logger.info("Warming up indicators for %s with %d candles", pair, len(historical))
+        logger.info(
+            "Warming up indicators for %s (%s) with %d candles",
+            pair, timeframe, len(historical),
+        )
 
         if pair not in self._indicator_states:
             self._indicator_states[pair] = {}
@@ -684,8 +700,10 @@ class TradingRunner:
         for c in historical:
             self._candle_buffer.add(c)
 
-        # Calculate initial state for each (indicator, params) spec
-        for state_key, (ind_key, params) in self._get_indicator_specs().items():
+        # Calculate initial state for each spec of this timeframe
+        for state_key, (ind_key, params, spec_tf) in self._get_indicator_specs().items():
+            if (spec_tf or self._effective_strategy_tf) != timeframe:
+                continue
             try:
                 indicator = self._indicator_registry.get(ind_key)
                 state = indicator.calculate(historical, **params)
@@ -794,6 +812,8 @@ class TradingRunner:
         trailing_distance_pct = risk_config.get(
             "trailing_distance_pct", self._config.trailing_distance_pct
         )
+        # Optional time-based exit (PositionManager._check_time_based_exit).
+        max_hold_minutes = risk_config.get("max_hold_minutes")
 
         if self._config.dry_run:
             # Dry-run mode: simulate the trade
@@ -814,6 +834,7 @@ class TradingRunner:
                     "strategy_name": signal.strategy_name,
                     "trailing_activation_pct": trailing_activation_pct,
                     "trailing_distance_pct": trailing_distance_pct,
+                    "max_hold_minutes": max_hold_minutes,
                     "dry_run": True,
                 },
             )
@@ -882,6 +903,7 @@ class TradingRunner:
                     "strategy_name": signal.strategy_name,
                     "trailing_activation_pct": trailing_activation_pct,
                     "trailing_distance_pct": trailing_distance_pct,
+                    "max_hold_minutes": max_hold_minutes,
                     "order_id": str(order_result.get("orderId", "")),
                     "dry_run": False,
                 },
@@ -1439,8 +1461,12 @@ class TradingRunner:
             else self._config.strategy_timeframe
         )
         self._effective_strategy_tf = strategy_tf
+        targets = [
+            tf for tf in self._strategy_timeframes()
+            if tf != self._config.base_timeframe
+        ]
 
-        if strategy_tf == self._config.base_timeframe:
+        if not targets:
             # Strategy runs on base timeframe (e.g. 1m) -- no aggregation.
             self._timeframe_aggregator = None
             logger.info(
@@ -1448,13 +1474,17 @@ class TradingRunner:
                 strategy_tf,
             )
         else:
-            self._timeframe_aggregator = TimeframeAggregator(
-                target_timeframes=[strategy_tf],
-            )
+            self._timeframe_aggregator = TimeframeAggregator(target_timeframes=targets)
             logger.info(
                 "Timeframe aggregator configured: %s -> %s",
-                self._config.base_timeframe, strategy_tf,
+                self._config.base_timeframe, ", ".join(targets),
             )
+
+    def _strategy_timeframes(self) -> list[str]:
+        """Timeframes read by the strategy, strategy timeframe last."""
+        if self._strategy_config is None:
+            return [self._effective_strategy_tf]
+        return self._strategy_loader.timeframes(self._strategy_config)
 
     # ------------------------------------------------------------------
     # Pair initialization
@@ -1477,17 +1507,18 @@ class TradingRunner:
             except Exception as exc:
                 logger.warning("Failed to load exchange info for %s: %s", pair, exc)
 
-        # Warm up indicators with historical candles
+        # Warm up indicators with historical candles (one fetch per timeframe)
         if self._exchange_rest is not None:
-            try:
-                historical = await self._exchange_rest.get_klines(
-                    pair,
-                    self._effective_strategy_tf,
-                    limit=500,
-                )
-                self._warm_up_indicators(pair, historical)
-            except Exception as exc:
-                logger.warning("Failed to warm up indicators for %s: %s", pair, exc)
+            for timeframe in self._strategy_timeframes():
+                try:
+                    historical = await self._exchange_rest.get_klines(
+                        pair, timeframe, limit=500,
+                    )
+                    self._warm_up_indicators(pair, historical, timeframe)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to warm up %s indicators for %s: %s", timeframe, pair, exc,
+                    )
 
     # ------------------------------------------------------------------
     # Candle parsing

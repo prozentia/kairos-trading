@@ -7,14 +7,24 @@ runs structural validation to catch misconfiguration early.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import Any, NamedTuple
 
 from core.indicators.registry import get_registry
 from core.models import StrategyConfig
+from core.timeframe.aggregator import TIMEFRAME_MINUTES
 
-# Condition params that are not indicator parameters. Multi-timeframe
-# conditions are not supported yet: indicators always run on the strategy TF.
+# Condition params that are not indicator parameters. ``timeframe`` selects
+# the candles an indicator runs on (multi-timeframe conditions).
 NON_INDICATOR_PARAMS = frozenset({"timeframe"})
+
+
+class IndicatorSpec(NamedTuple):
+    """One indicator state the engine must maintain."""
+
+    indicator: str
+    params: dict[str, Any]
+    # None = the strategy timeframe.
+    timeframe: str | None = None
 
 
 def indicator_params(params: dict[str, Any] | None) -> dict[str, Any]:
@@ -31,11 +41,16 @@ def state_key(indicator: str, params: dict[str, Any] | None = None) -> str:
     strategies written without params keep their historical behaviour.
     With params, each distinct parameter set gets its own state, e.g.
     ``ema|{"period": 200}``, so EMA 50 and EMA 200 can coexist.
+    A ``timeframe`` param adds a suffix: ``heikin_ashi@15m``.
     """
+    key = indicator
+    timeframe = (params or {}).get("timeframe")
+    if timeframe:
+        key = f"{key}@{timeframe}"
     clean = indicator_params(params)
-    if not clean:
-        return indicator
-    return f"{indicator}|{json.dumps(clean, sort_keys=True)}"
+    if clean:
+        key = f"{key}|{json.dumps(clean, sort_keys=True)}"
+    return key
 
 
 def normalize_filters(filters: Any) -> dict[str, Any]:
@@ -117,20 +132,23 @@ class StrategyLoader:
 
         return config
 
-    def indicator_specs(self, config: StrategyConfig) -> dict[str, tuple[str, dict[str, Any]]]:
+    def indicator_specs(self, config: StrategyConfig) -> dict[str, IndicatorSpec]:
         """List every indicator state the engine must compute.
 
         Returns:
-            Mapping ``state_key -> (indicator_key, params)``. Includes the
+            Mapping ``state_key -> IndicatorSpec``. Includes the
             default-parameter state of every ``indicators_needed`` entry,
-            one state per distinct params found in the conditions, and the
-            states required by the ema_trend / adx_trend filters.
+            one state per distinct params/timeframe found in the conditions,
+            and the states required by the ema_trend / adx_trend filters.
         """
-        specs: dict[str, tuple[str, dict[str, Any]]] = {}
+        specs: dict[str, IndicatorSpec] = {}
 
         def add(indicator: str, params: dict[str, Any] | None = None) -> None:
-            clean = indicator_params(params)
-            specs.setdefault(state_key(indicator, clean), (indicator, clean))
+            timeframe = (params or {}).get("timeframe") or None
+            specs.setdefault(
+                state_key(indicator, params),
+                IndicatorSpec(indicator, indicator_params(params), timeframe),
+            )
 
         for key in config.indicators_needed:
             add(key)
@@ -152,6 +170,20 @@ class StrategyLoader:
             add(indicator, params)
 
         return specs
+
+    def timeframes(self, config: StrategyConfig) -> list[str]:
+        """Timeframes the strategy reads, strategy timeframe last.
+
+        Other timeframes come first (largest first) so that, when several
+        candles close on the same minute, their indicators are up to date
+        before the strategy timeframe is evaluated.
+        """
+        others = {
+            spec.timeframe for spec in self.indicator_specs(config).values()
+            if spec.timeframe and spec.timeframe != config.timeframe
+        }
+        ordered = sorted(others, key=lambda tf: TIMEFRAME_MINUTES.get(tf, 0), reverse=True)
+        return ordered + [config.timeframe]
 
     def validate(self, config: StrategyConfig) -> list[str]:
         """Validate a StrategyConfig and return a list of error messages.
@@ -195,6 +227,10 @@ class StrategyLoader:
                 elif isinstance(tree, dict):
                     tree_errors = self._validate_condition_tree(tree, label)
                     errors.extend(tree_errors)
+
+        for spec in self.indicator_specs(config).values():
+            if spec.timeframe and spec.timeframe not in TIMEFRAME_MINUTES:
+                errors.append(f"Unsupported timeframe {spec.timeframe!r} for {spec.indicator!r}.")
 
         # Validate risk parameters.
         risk = config.risk

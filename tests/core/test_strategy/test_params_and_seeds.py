@@ -64,8 +64,8 @@ def _seed_definitions() -> list[dict[str, Any]]:
 def _compute_states(config: StrategyConfig, candles: list[Candle]) -> dict[str, dict]:
     registry = get_registry()
     states = {}
-    for key, (ind_key, params) in StrategyLoader().indicator_specs(config).items():
-        states[key] = registry.get(ind_key).calculate(candles, **params)
+    for key, spec in StrategyLoader().indicator_specs(config).items():
+        states[key] = registry.get(spec.indicator).calculate(candles, **spec.params)
     return states
 
 
@@ -95,8 +95,9 @@ class TestStateKey:
     def test_key_is_order_independent(self) -> None:
         assert state_key("macd", {"a": 1, "b": 2}) == state_key("macd", {"b": 2, "a": 1})
 
-    def test_timeframe_param_is_ignored(self) -> None:
-        assert state_key("heikin_ashi", {"timeframe": "5m"}) == "heikin_ashi"
+    def test_timeframe_param_gets_its_own_state(self) -> None:
+        assert state_key("heikin_ashi", {"timeframe": "15m"}) == "heikin_ashi@15m"
+        assert state_key("ema", {"timeframe": "15m", "period": 50}) == 'ema@15m|{"period": 50}'
 
 
 class TestIndicatorSpecs:
@@ -118,9 +119,9 @@ class TestIndicatorSpecs:
         })
         specs = StrategyLoader().indicator_specs(config)
         assert specs[state_key("ema_cross", {"fast_period": 5, "slow_period": 13})] == (
-            "ema_cross", {"fast_period": 5, "slow_period": 13})
-        assert specs[state_key("ema", {"period": 200})] == ("ema", {"period": 200})
-        assert specs[state_key("adx_dmi", {"period": 10})] == ("adx_dmi", {"period": 10})
+            "ema_cross", {"fast_period": 5, "slow_period": 13}, None)
+        assert specs[state_key("ema", {"period": 200})] == ("ema", {"period": 200}, None)
+        assert specs[state_key("adx_dmi", {"period": 10})] == ("adx_dmi", {"period": 10}, None)
         assert "ema_cross" in specs  # default state kept for indicators_needed
 
     def test_condition_params_change_indicator_values(self) -> None:
