@@ -27,6 +27,14 @@ DEFAULT_TICKER_TTL = 30
 DEFAULT_BOT_STATUS_TTL = 120
 
 
+
+def _redact_url(url: str) -> str:
+    """Hide the credentials of a redis:// URL (keeps host, port and db)."""
+    scheme, sep, rest = url.partition("://")
+    if not sep or "@" not in rest:
+        return url
+    return f"{scheme}://***@{rest.rsplit('@', 1)[1]}"
+
 class RedisCache:
     """Async Redis client for caching and pub/sub.
 
@@ -55,7 +63,8 @@ class RedisCache:
         )
         # Test the connection
         await self._client.ping()
-        logger.info("Redis connected: %s", self._url)
+        # Never log the password embedded in the URL.
+        logger.info("Redis connected: %s", _redact_url(self._url))
 
     async def disconnect(self) -> None:
         """Close the Redis connection pool and cancel listener tasks."""
